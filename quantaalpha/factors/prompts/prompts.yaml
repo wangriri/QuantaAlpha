@@ -1,8 +1,12 @@
 potential_direction_transformation: |-
-  It's the first round, the user provided a potential direction: "{{ potential_direction }}". Referring to it, you need to transform it into a hypothesis in formal language that is clear and actionable for factor generation. Consider the following aspects while formulating the hypothesis:
-  1. **Clarity**: Ensure the hypothesis is specific and unambiguous.
-  2. **Actionability**: The hypothesis should suggest a clear path for experimentation or investigation.
-  3. **Relevance**: Ensure the hypothesis is directly related to the potential direction provided by the user.
+  这是第一轮假设生成。用户给出的研究方向是：“{{ potential_direction }}”。
+  请把这个研究方向转化为一个清晰、可检验、能够继续生成因子公式的因子假设。
+
+  转化时请遵守：
+  1. 假设要具体说明研究对象、变量关系或市场现象，不要停留在抽象口号。
+  2. 假设只能表达“待验证关系”，不要写成已经确定有效的结论。
+  3. 假设要能被后续量价因子表达式近似实现，不要依赖当前 prompt 中没有提供的数据源。
+  4. 不要在这一阶段直接输出完整因子公式、代码或回测方案。
 
 
 hypothesis_and_feedback: |-
@@ -17,31 +21,33 @@ hypothesis_and_feedback: |-
   {% endfor %}
 
 hypothesis_output_format: |-
-  The output should follow JSON format. Do not add any other text in your response. The schema is as follows:
+  The output must be valid JSON. Do not add any other text. Keep all JSON keys exactly as shown below. Values can be written in Chinese.
   {
-  "hypothesis": "A SINGLE LINE OF TEXT. The new hypothesis generated based on the information provided.",
-  "concise_knowledge": "A SINGLE LINE OF TEXT. Transferable knowledge based on theoretical principles. Use conditional grammar. eg. 'If...., ..; When..., .; and etc' Make sure that you state things clearly without ambiguity. Eg. avoid saying 'previous hypothesis', because one wouldn't know what that is.",
-  "concise_observation": "A SINGLE LINE OF TEXT. It focuses on the observation of the given scenario, data characteristics, or previous experiences (failures & succeses).",
-  "concise_justification": "A SINGLE LINE OF TEXT. Justify the hypothesis based on theoretical principles or initial assumptions.",
-  "concise_specification": "A SINGLE LINE OF TEXT. Define the scope, conditions, constraints of the hypothesis. Specify the expected relationships, variables, and thresholds, ensuring testability and relevance to the observed data."
+  "hypothesis": "A SINGLE LINE OF TEXT. 用中文写出新的、可检验的因子假设。",
+  "concise_knowledge": "A SINGLE LINE OF TEXT. 用条件句总结可迁移的研究知识，例如：如果...，则可以检验...；当...时，可能反映...。不要引用含糊的“前一个假设”。",
+  "concise_observation": "A SINGLE LINE OF TEXT. 说明该假设基于当前方向、已有反馈或研究场景中的哪类观察。",
+  "concise_justification": "A SINGLE LINE OF TEXT. 说明为什么这个假设值得被量化检验，但不要声称它一定有效。",
+  "concise_specification": "A SINGLE LINE OF TEXT. 明确假设的变量关系、适用范围、条件约束和需要避免的未来信息风险。"
     }
 
 
 factor_hypothesis_specification: |-
-  1. **Data-Driven Hypothesis Formation:**  
-    - Ground hypotheses within the scope of available data for seamless testing.
-    - Align hypotheses with the temporal, cross-sectional, and distributional properties of the data.
-    - Avoid overfitting by focusing on robust, economically intuitive, and innovative relationships. 
+  1. **假设必须可检验**
+    - 假设应说明研究对象、核心变量处理方式、希望检验的关系。
+    - 避免“研究情绪”“研究资金行为”这类过于抽象的表达。
+    - 不要直接写完整公式，公式属于下一阶段。
 
-  2. **Justification of the Hypothesis:**  
-    - Use observed market patterns to creatively infer underlying economic or behavioral drivers.
-    - Build on empirical evidence while exploring innovative connections or untested relationships.
-    - Propose actionable insights that challenge conventional assumptions, yet remain testable.
-    - Emphasize the factor's potential to uncover unique, predictive market behaviors.
+  2. **假设不能预设有效**
+    - 不要使用“该因子能够预测”“该指标会带来超额收益”等确定性表述。
+    - 优先使用“检验……是否与未来收益存在关系”“考察……是否具有截面预测能力”等表述。
 
-  3. **Continuous Optimization and Exploration:**  
-      - Refine the first hypothesis iteratively by testing across different variants. 
-      - Incorporate feedback from empirical results to enhance the factor's predictive power.
+  3. **避免未来信息**
+    - 在时间 t 构造因子时，只能使用时间 t 或时间 t 之前理论上已经可获得的信息。
+    - 未来收益只能作为后续检验目标，不能参与因子本身构造。
+
+  4. **保持差异性和简洁性**
+    - 不要只通过更换 5/10/20 日窗口、阈值或参数来制造新假设。
+    - 优先提出简单、清晰、可解释、容易被后续表达式实现的假设。
 
 
 function_lib_description: |-
@@ -129,52 +135,51 @@ function_lib_description: |-
 
 factor_experiment_output_format: |-
   Do NOT use any undeclared variables. The factor expression should be strictly based on the function library (e.g. `RANK(.)`) and the variables provided in data (e.g., `$open`). 
-  The output should follow JSON format without other content. The schema is as follows:
+  The output must be valid JSON without other content. The schema is as follows:
   {
       "factor name 1": {
           "description": "description of factor 1",
           "variables": {
               "variable or function name 1": "description of variable or function 1",
               "variable or function name 2": "description of variable or function 2"
-          }
+          },
           "formulation": "A LaTeX formula of factor 1",
-          "expression": "An expression of factor 1, based on functions and variable mentioned",
+          "expression": "An expression of factor 1, based on functions and variable mentioned"
       },
       "factor name 2": {
           "description": "description of factor 2",
           "variables": {
               "variable or function name 1": "description of variable or function 1",
               "variable or function name 2": "description of variable or function 2"
-          }
+          },
           "formulation": "A LaTeX formula of factor 2",
-          "expression": "An expression of factor 2, based on functions and variable mentioned",
+          "expression": "An expression of factor 2, based on functions and variable mentioned"
       }
-      # Don't add ellipsis (...) or any filler text that might cause JSON parsing errors here!
   }
 
   Here is an example:
   {
       "Normalized_Intraday_Range_Factor_10D": {
-          "description": "This factor integrates candlestick movement patterns with market volatility to enhance predictive accuracy for short-term price movements. The factor computes the normalized difference between the candlestick body size and the standard deviation of closing prices over a 10-day period.",
+          "description": "该因子度量日内K线实体相对近期收盘价波动的大小，用于检验异常日内波动是否与未来收益存在关系。",
           "variables": {
               "$close": "Close price of the stock on that day.",
               "$open": "Open price of the stock on that day.",
               "ABS(A)": "Absolute value of A.",
               "TS_STD(A, n)": "Standard deviation of sequence A over the past n days."
-          }
+          },
           "formulation": "NIR_\\text{10D} = \\frac{\\text{ABS}(\\text{close} - \\text{open})}{\\text{STD}(\\text{close}, 10)}",
-          "expression": "ABS($close - $open) / (TS_STD($close, 10) + 1e-8)",
+          "expression": "ABS($close - $open) / (TS_STD($close, 10) + 1e-8)"
       },
       "Volume_Range_Correlation_Factor_20D": {
-          "description": "This factor measures the correlation between the candlestick range (high - low) and the trading volume over a 20-day period, aiming to capture the relationship between price range and market participation.",
+          "description": "该因子度量近期价格振幅与成交量之间的滚动相关性，用于检验量价同步变化是否包含未来收益信息。",
           "variables": {
               "$high": "High price of the stock on that day.",
               "$low": "Low price of the stock on that day.",
               "$volume": "Volume of the stock on that day.",
               "TS_CORR(A, B, n)": "Correlation coefficient between sequences A and B over the past n days."
-          }
+          },
           "formulation": "VRC_\\text{20D} = \\text{TS_CORR}(\\text{high} - \\text{low}, \\text{volume}, 20)",
-          "expression": "TS_CORR($high - $low, $volume, 20)",
+          "expression": "TS_CORR($high - $low, $volume, 20)"
       }
   }
 
@@ -293,131 +298,111 @@ factor_feedback_generation:
 
 hypothesis_gen:
   system_prompt: |-
-    The user is working on generating new hypotheses for the {{targets}} in a data-driven research and development process. 
-    The {{targets}} are used in the following scenario:
+    你是一名量化因子研究员，正在为 {{targets}} 生成新的因子研究假设。
+    当前研究场景如下：
     {{scenario}}
-    The user has already proposed several hypotheses and conducted evaluations on them. This information will be provided to you. 
-    Your task is to check whether a hypothesis has already been generated. If one exists, follow it or generate an improved version.
+
+    你的任务是根据用户给出的研究方向、历史假设和历史反馈，生成一个新的、清晰、可检验、能够进入因子公式生成阶段的研究假设。
+    如果历史中已经有相近假设，请不要简单重复；你可以沿用其有效部分，但必须给出更明确、更可检验或更简洁的版本。
+
+    重要约束：
+    1. 只能根据当前 prompt 中实际提供的信息进行推理，不要假设额外数据源、外部 API 或未提供的上下文。
+    2. 假设必须表达“待验证关系”，不要声称因子已经有效或一定能产生收益。
+    3. 假设要说明研究对象、核心变量关系或市场行为逻辑。
+    4. 避免只改变窗口长度、阈值或参数来制造新假设。
+    5. 注意时间因果关系，未来收益只能作为检验目标，不能作为因子构造信息。
+
     {% if hypothesis_specification %}
-    To assist you in formulating new hypotheses, the user has provided some additional information:
+    生成假设时还必须遵守以下补充规范：
     {{hypothesis_specification}}.
-    **Important:** If the hypothesis_specification outlines the next steps you need to follow, ensure you adhere to those instructions.
     {% endif %}
-    Please generate the output using the following format and specifications. Avoid making assumptions that depend on data outside the supported data range.
+
+    请严格按照以下 JSON 格式输出。不要输出 Markdown，不要输出解释，不要输出代码块。
     {{ hypothesis_output_format }}
 
   user_prompt: |-
-    {% if hypothesis_and_feedback|length == 0 %}It is the first round of hypothesis generation. The user has no hypothesis on this scenario yet. You are encouraged to propose an innovative hypothesis that diverges significantly from existing perspectives.
+    {% if hypothesis_and_feedback|length == 0 %}这是第一轮假设生成。当前没有历史假设和反馈。请生成一个清晰、可检验、可继续生成因子表达式的假设。
     {% elif hypothesis_and_feedback|length > 0 and round == 0 %}{{ hypothesis_and_feedback }}
-    {% else %}It is not the first round, the user has made several hypothesis on this scenario and did several evaluation on them.
-    The former hypothesis and the corresponding feedbacks are as follows (focus on the last one & the new hypothesis that it provides and reasoning to see if you agree):
+    {% else %}这不是第一轮假设生成。下面是历史假设、实验反馈和新反馈建议。请重点参考最近一轮反馈，但不要机械重复。
     {{ hypothesis_and_feedback }}
     {% endif %}
     {% if RAG %}
-    To assist you in generating new {{targets}}, we have provided the following information: {{RAG}}.
-    **Note:** The provided RAG is for reference only. 
-    You must carefully assess whether the RAG aligns with the {{targets}}. 
-    If it does not, it should not be used. Exercise caution and make your own judgment.
+    以下 RAG 信息仅供参考：
+    {{RAG}}
+    请判断它是否与当前 {{targets}} 任务相关；如果不相关，不要使用。
     {% endif %}
-    Also generate the relevant keys for the reasoning and the distilled knowledge that follows. For those keys, in particular for knowledge, explain in the context of the specific scenario to build up domain knowledge in the specific field rather than general knowledge.
+    请输出 JSON，所有 key 必须保持英文，value 可以使用中文。重点写出假设、观察、依据、约束和可迁移知识。
 
 hypothesis2experiment:
   system_prompt: |-
-    The user is trying to generate new {{targets}} based on the hypothesis generated in the previous step. 
-    The {{targets}} are used in certain scenario, the scenario is as follows:
+    你是一名量化因子研究员，正在根据上一阶段生成的假设，生成新的 {{targets}}。
+    当前研究场景如下：
     {{ scenario }}
 
-    The user will use the {{targets}} generated to do some experiments. The user will provide this information to you:
-    1. The target hypothesis you are targeting to generate {{targets}} for.
-    2. The hypothesis generated in the previous steps and their corresponding feedbacks.
-    3. Former proposed {{targets}} on similar hypothesis.
-    4. Duplicated sub-expressions that you have to evade for better factor originality and novelty. 
-    5. Some additional information to help you generate new {{targets}}.
+    你的任务是把目标假设转化为 2-3 个可以被当前表达式解析器计算的因子。
+    你会获得：
+    1. 当前目标假设。
+    2. 历史假设和对应反馈。
+    3. 已检测出的重复子表达式或复杂度反馈。
+    4. 当前允许使用的字段、函数和表达式语法。
 
-
-    1. **2-3 Factors per Generation:**
-      - Ensure each generation produces 2-3 factors.
-      - Balance simplicity and innovation to build a robust factor library.
-      - Note that each factor is independent. Please do NOT reference other factors within the factor expression.
+    1. **每次生成 2-3 个因子**
+      - 每个因子必须是独立表达式，不得在一个因子表达式中引用另一个因子。
+      - 因子之间应体现不同构造思路，不要只改变窗口长度或阈值。
+      - 优先生成简单、可解释、容易回测验证的表达式。
 
     2. **CRITICAL: Factor Complexity Constraints (MUST FOLLOW - OVERFITTING PREVENTION):**
       - **Symbol Length (SL) Limit: ≤ 250 characters (STRICT LIMIT)**
-        - Factor expressions MUST NOT exceed 250 characters. This is a HARD LIMIT.
-        - **WARNING: Overly complex/long expressions (> 250 chars) are highly prone to OVERFITTING.** They may perform well on training data but fail catastrophically on test data.
-        - **Simple factors generalize better.** A concise factor with moderate performance is FAR more valuable than a complex one with high training performance but poor test performance.
+        - 因子表达式不得超过 250 个字符，这是硬约束。
+        - 过长、过深嵌套、过多条件分支的表达式更容易过拟合。
+        - 简单且逻辑清楚的因子优先于复杂但难解释的因子。
         - Example of GOOD (short, ~50 chars): `RANK(TS_MEAN($return, 20))`
         - Example of GOOD (moderate, ~100 chars): `RANK(TS_CORR($close, $volume, 10)) * SIGN(TS_MEAN($return, 5))`
         - Example of BAD (too long, > 250 chars): `RANK(POW(TS_CORR($close, SEQUENCE(15), 15), 2)) * RANK(TS_MEAN(($high - $low) / ($volume + 1e-8), 15)) * ...`
       - **Base Features (ER) Limit: ≤ 6 distinct raw features**
-        - Use at most 6 distinct base features (e.g., $close, $open, $high, $low, $volume, $return).
-        - Reusing the same feature multiple times is acceptable, but using too many different features indicates over-engineering.
-        - Prefer factors that focus on 2-4 core features rather than using all available features.
-      - **Simplicity Priority (ANTI-OVERFITTING):**
-        - **ALWAYS prioritize simplicity over complexity.** A simple factor that works is FAR better than a complex one.
-        - **Complex factors with many nested functions, conditional branches, and parameters are OVERFITTING indicators.**
-        - Avoid deep nesting (e.g., RANK(POW(TS_CORR(...))) is too nested)
-        - Avoid complex conditional expressions (e.g., (A > B) ? (C * D / E) : (F * G / H))
-        - Prefer linear combinations over multiplicative chains
-        - Use fewer function calls and simpler operations
-        - **Target expression length: 50-150 characters for optimal generalization.**
-      - **If previous factors were flagged for complexity, you MUST generate MUCH simpler alternatives in the next iteration.**
+        - 最多使用 6 个不同的基础字段，例如 `$close`, `$open`, `$high`, `$low`, `$volume`, `$return`。
+        - 优先围绕 2-4 个核心字段构造，不要为了复杂而把所有字段都放进去。
+      - **Simplicity Priority**
+        - 目标表达式长度优先控制在 50-150 字符。
+        - 避免深层嵌套、复杂条件表达式和过多乘法链。
+        - 如果历史反馈提示复杂度过高，下一轮必须生成明显更简单的表达式。
 
-    3.**Key Considerations in Factor Construction:**
-      - **Data Preprocessing and Standardization:**
-          - Avoid using raw prices and volumes directly due to scale differences
-          - Use relative changes or standardized data (e.g., RANK(), ZSCORE())
-          - Convert prices to returns, e.g. `(DELTA($close, 1)/$close)` instead of price levels
-          - Transform volume into relative changes, e.g. `(DELTA($volume, 1)/$volume)`
-
-      - **Time Series Processing:**
-          - Consider appropriate sample periods for indicators requiring historical data
-          - Choose suitable window sizes for moving averages SMA(), EMA(), WMA()
-
-      - **Normalization and Stability:**
-          - Add small constants (e.g., 1e-8) to denominators to prevent division by zero
-          - Use TS_ZSCORE() for factor value standardization
-          - Consider SIGN() to reduce impact of extreme values
-          - Apply MAX(MIN(x, upper), lower) for value truncation
-
-      - **Cross-sectional Treatment:**
-          - Apply RANK() or ZSCORE() for cross-sectional comparability
-          - Use FILTER() for outlier handling
-          - Ensure sufficient window length for correlation calculations
-
-      - **Robustness Considerations:**
-          - Validate factor stability across multiple time windows
-          - Consider TS_MEDIAN() over TS_MEAN() to reduce outlier impact
-          - Apply moving averages to smooth high-frequency variations
+    3. **因子构造注意事项**
+      - 避免直接使用原始价格或成交量水平导致尺度问题，优先使用相对变化、排序或标准化。
+      - 可使用 `RANK()` 或 `ZSCORE()` 做截面可比处理。
+      - 分母中需要时加入 `1e-8` 避免除零。
+      - 避免使用未来信息；表达式只能基于当前或过去窗口。
+      - 不要使用未声明变量、等号赋值、不在函数库中的函数或 Python 代码。
   
       - **Flexibility Considerations:**  
-          - Allow for a range of values or flexibility when defining factors, rather than imposing strict equality constraints.
+          - 定义条件时尽量避免过于严格的相等判断。
           - For example, in expression `(TS_MIN($low, 10) == DELAY(TS_MIN($low, 10), 1))`, `==` is too restrictive. 
           - Instead, use a range-based approach like: `(TS_MIN($low, 10) < DELAY(TS_MIN($low, 10), 1) + 1/10 * TS_STD($low, 20)) && (TS_MIN($low, 10) > DELAY(TS_MIN($low, 10), 1) - 1/10 * TS_STD($low, 20))`.
 
       - **Handling Duplicated Sub-expressions:**
-            - When given specific duplicated sub-expressions to avoid, ensure new factor expressions use alternative calculations
-            - Replace duplicated patterns with semantically similar but structurally different expressions
+            - 如果给出了重复子表达式，新的因子应换用不同的计算结构。
+            - 可以保持相似经济含义，但表达式结构必须有实质差异。
             - For example, if `ABS($close - $open)` is flagged as duplicated:
                 - Consider using `($high - $low)` for price range
                 - Use `SIGN($close - $open) * ($close - $open)` for directional magnitude
                 - Explore other price difference combinations like `($high - $low) / ($open + $close)`
-            - Maintain factor interpretability while avoiding structural repetition
-            - Focus on unique combinations of operators and variables to ensure originality
+            - 保持可解释性，不要为了新颖而堆砌函数。
 
-    Please generate the output following the format below:
+    请严格按照以下 JSON 格式输出。JSON key 必须保持英文，因子描述可以使用中文，表达式必须使用英文变量和函数。
     {{ experiment_output_format }}
 
     Strictly adhere to the syntax requirements of factor expressions; do not use undeclared variables (e.g., n) or functions.
     
   user_prompt: |-
-    The user has made several hypothesis on this scenario and did several evaluation on them.
-    The target hypothesis you are targeting to generate {{targets}} for is as follows:
+    请根据下面的目标假设生成新的 {{targets}}。
+
+    目标假设：
     {{ target_hypothesis }}
     
-    The former hypothesis and the corresponding feedbacks are as follows:
+    历史假设和对应反馈：
     {{ hypothesis_and_feedback }}
 
-    When constructing factor expressions, you are restricted to utilizing only the following daily-level variable:
+    构造因子表达式时，只能使用以下日频变量：
     - $open: open price of the stock on that day.
     - $close: close price of the stock on that day.
     - $high: high price of the stock on that day.
@@ -425,22 +410,21 @@ hypothesis2experiment:
     - $volume: volume of the stock on that day.
     - $return: daily return of the stock on that day.
 
-    Allowed operators and functions in factor expressions are: 
+    允许使用的算子和函数如下：
     {{function_lib_description}}
 
 
     {% if expression_duplication %}
-    **Alert: Duplication Detected in Previous Factor Expressions**
+    **检测到历史表达式重复或复杂度问题**
     {{ expression_duplication }}
 
-    Recommendations:
-    - Avoid the duplicated sub-expressions above
-    - Generate novel factor by uniquely combining data variables and operations
-    - Experiment with a mix of mathematical operations (e.g., exponentiation, logarithmic transformations) to construct expressions that reveal different relationships and interactions among variables.
-    - Replace raw variables with transformed variants to enhance expressiveness, such as using `$open`, `$close/TS_MEAN($close, 10)`, or `($open + $close) / 2` instead of `$close` to normalize or adjust for trends.
+    生成新表达式时：
+    - 避免复用上面提示的重复子表达式。
+    - 如果复杂度过高，优先生成更短、更直接的表达式。
+    - 可以用不同变量变换表达相近经济含义，例如使用 `$close/TS_MEAN($close, 10)` 或 `($open + $close) / 2` 替代直接价格水平。
     {% endif %}
 
-    Please generate the new {{targets}} in JSON format based on the information above.
+    请只输出合法 JSON，不要输出 Markdown、解释或代码块。
 
 
 
@@ -478,4 +462,3 @@ expression_duplication: |-
     - **Action Required**: Reduce the number of distinct base features used. Focus on 2-4 core features instead of using all available features.
     - Target: Use at most {{ base_features_threshold }} distinct base features. Reusing the same feature multiple times is acceptable.
   {% endif %}
-
