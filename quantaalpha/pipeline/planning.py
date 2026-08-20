@@ -9,6 +9,7 @@ import yaml
 
 from quantaalpha.log import logger
 from quantaalpha.llm.client import APIBackend
+from quantaalpha.prompting import get_prompt_pack_metadata
 
 
 def _load_prompts(prompt_file: Path) -> dict[str, str]:
@@ -110,7 +111,12 @@ def generate_parallel_directions_with_trace(
         "raw": {
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
-            "variables": {"initial_direction": initial_direction, "n": n},
+            "variables": {
+                "initial_direction": initial_direction,
+                "n": n,
+                "prompt_file": str(prompt_file),
+                "prompt_pack": get_prompt_pack_metadata(),
+            },
             "responses": [],
         },
         "parser": {"attempt_count": 0, "warnings": []},

@@ -10,6 +10,7 @@
 - 不改数据读取、MongoDB、Qlib、回测逻辑。
 - 不改 mutation / crossover 的演化提示词。
 - 只优化当前 original 主链路中已经实际使用的 prompt：研究方向生成、假设生成、假设转因子公式。
+- 已补充轻量 Prompt Pack 切换能力，支持 `zh_quant_v1` 与 `en_default` 做 A/B 对比。
 
 ## 修改范围
 
@@ -31,6 +32,12 @@ quantaalpha/pipeline/prompts/planning_prompts.yaml
 - 增加约束：不得把未经验证的方向写成确定有效结论。
 - 输出格式从“Markdown 代码块包裹 JSON”改为“纯 JSON”。
 - JSON key 仍保持 `"directions"`，避免破坏解析逻辑。
+
+同时保留了优化前英文 baseline：
+
+```text
+quantaalpha/pipeline/prompts/planning_prompts_en_default.yaml
+```
 
 ### 2. 方向转假设 Prompt
 
@@ -101,6 +108,87 @@ factor_experiment_output_format
   - 移除 JSON 示例里的注释。
   - 示例描述改为中文，但 key 和 expression 保持英文。
 
+同时保留了优化前英文 baseline：
+
+```text
+quantaalpha/factors/prompts/prompts_en_default.yaml
+```
+
+### 4. Prompt Pack 切换
+
+新增轻量 Prompt Pack 模块：
+
+```text
+quantaalpha/prompting/
+  __init__.py
+  context.py
+  loader.py
+  schemas.py
+
+quantaalpha/prompting/packs/
+  zh_quant_v1.yaml
+  en_default.yaml
+```
+
+当前 pack 只是“提示词文件选择器”，不注入额外上下文。
+
+可用 pack：
+
+```text
+zh_quant_v1  # 中文量化研究轻量优化版，默认使用
+en_default   # 优化前英文 baseline
+```
+
+配置位置：
+
+```text
+configs/experiment.yaml
+```
+
+配置示例：
+
+```yaml
+prompting:
+  pack: zh_quant_v1
+  output_language: zh-CN
+  strict_json: true
+```
+
+要跑英文 baseline，把配置改成：
+
+```yaml
+prompting:
+  pack: en_default
+  output_language: en
+  strict_json: false
+```
+
+也可以通过环境变量临时覆盖配置文件，用于不改配置的一次性 A/B 测试：
+
+```bash
+QUANTAALPHA_PROMPT_PACK=en_default .venv/bin/python -m quantaalpha.cli mine --direction "测试研究方向" --config_path configs/experiment.yaml
+QUANTAALPHA_PROMPT_PACK=zh_quant_v1 .venv/bin/python -m quantaalpha.cli mine --direction "测试研究方向" --config_path configs/experiment.yaml
+```
+
+运行 trace 中会记录本次使用的 prompt pack，方便对比两次实验。
+
+### 5. 如何测试提示词优化效果
+
+建议用完全相同的研究方向、模型、数据区间、轮次参数，只切换 prompt pack：
+
+```bash
+QUANTAALPHA_PROMPT_PACK=en_default .venv/bin/python -m quantaalpha.cli mine --direction "研究短期量价反转因子" --config_path configs/experiment.yaml
+QUANTAALPHA_PROMPT_PACK=zh_quant_v1 .venv/bin/python -m quantaalpha.cli mine --direction "研究短期量价反转因子" --config_path configs/experiment.yaml
+```
+
+对比重点：
+
+- 研究方向是否更具体。
+- 假设是否更像“可检验命题”，而不是笼统概念。
+- 公式是否更少出现未来函数、不可用字段、复杂嵌套。
+- 同一轮生成的因子是否减少“只改窗口参数”的重复。
+- trace 里的 `execution_context.prompt_pack.name` 是否分别为 `en_default` 和 `zh_quant_v1`。
+
 ## 语言策略
 
 本次采用混合语言策略：
@@ -158,6 +246,7 @@ tests/test_prompt_templates.py
 测试内容：
 
 - planning prompt 可以渲染。
+- `zh_quant_v1` 和 `en_default` 两套 prompt pack 都能解析到对应 prompt 文件。
 - planning prompt 不包含未接入的上下文占位符。
 - planning 输出格式不再要求 Markdown code block。
 - planning 解析器可以解析纯 JSON。
@@ -176,12 +265,12 @@ tests/test_prompt_templates.py
 
 下一阶段可以在当前版本稳定后继续做：
 
-1. 增加 `prompt_version` 记录到 trace 文件。
-2. 把当前轻量 prompt 抽象成可配置的 `zh_quant_v1_light` prompt pack。
+1. 把 prompt pack 选择暴露到前端设置页。
+2. 将 trace 中的 prompt pack 元数据展示到前端运行详情。
 3. 接入真实 `data_context` 后，再把可用数据、频率、时间范围写进 prompt。
 4. 接入全局因子库后，再加入已有因子去重、active / disabled、相似因子经验检索。
 5. 单独优化 mutation / crossover，让它们继承“不要只改参数、保持低相关、避免重复”的规则。
 
 ## 本次成果一句话
 
-本次完成了 QuantaAlpha original 主链路的中文量化研究 prompt 轻量优化：让 LLM 更像中文量化研究员一样提出方向、生成假设和写因子公式，同时保留英文 JSON key 和表达式语法，避免破坏现有系统解析与执行。
+本次完成了 QuantaAlpha original 主链路的中文量化研究 prompt 轻量优化，并补充了 `zh_quant_v1` / `en_default` 轻量 Prompt Pack 切换能力：让 LLM 更像中文量化研究员一样提出方向、生成假设和写因子公式，同时保留英文 JSON key 和表达式语法，并支持后续 A/B 测试优化效果。

@@ -1,0 +1,7 @@
+name: zh_quant_v1
+version: "2026-08-20"
+output_language: zh-CN
+strict_json: true
+planning_prompt_file: planning_prompts.yaml
+factor_prompt_file: prompts.yaml
+description: 中文量化研究轻量优化版。仅使用当前真实传入的信息，不包含 data_context / factor_library_context / environment_context。

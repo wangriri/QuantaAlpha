@@ -16,6 +16,7 @@ import os
 import pandas as pd
 from quantaalpha.log import logger
 from quantaalpha.factors.regulator.factor_regulator import FactorRegulator
+from quantaalpha.prompting import resolve_factor_prompts_path
 
 DEFAULT_HISTORY_LIMIT = 6
 MIN_HISTORY_LIMIT = 1
@@ -51,8 +52,9 @@ def is_input_length_error(error_msg: str) -> bool:
     return any(indicator.lower() in error_str for indicator in error_indicators)
 
 
+PROMPTS_DIR = Path(__file__).parent / "prompts"
 QlibFactorHypothesis = Hypothesis
-qa_prompt_dict = Prompts(file_path=Path(__file__).parent / "prompts" / "proposal.yaml")
+qa_prompt_dict = Prompts(file_path=PROMPTS_DIR / "proposal.yaml")
 
 class AlphaAgentHypothesis(Hypothesis):
     """
@@ -86,7 +88,7 @@ class AlphaAgentHypothesis(Hypothesis):
                 concise Specification: {self.concise_specification}
                 """
 
-base_prompt_dict = Prompts(file_path=Path(__file__).parent / "prompts" / "prompts.yaml")
+base_prompt_dict = Prompts(file_path=resolve_factor_prompts_path(PROMPTS_DIR / "prompts.yaml"))
 
 class QlibFactorHypothesisGen(FactorHypothesisGen):
     def __init__(self, scen: Scenario) -> Tuple[dict, bool]:
@@ -197,7 +199,7 @@ class QlibFactorHypothesis2Experiment(FactorHypothesis2Experiment):
 
 
 
-qa_prompt_dict = Prompts(file_path=Path(__file__).parent / "prompts" / "prompts.yaml")
+qa_prompt_dict = Prompts(file_path=resolve_factor_prompts_path(PROMPTS_DIR / "prompts.yaml"))
 
 # prompt_dict not as attribute: class instance is pickled later, prompt_dict cannot be pickled
 class AlphaAgentHypothesisGen(FactorHypothesisGen):

@@ -4,6 +4,18 @@
 # ============================================================
 
 # ============================================================
+# PROMPTING CONFIGURATION
+# Controls prompt pack selection for A/B testing
+# ============================================================
+prompting:
+  # zh_quant_v1: Chinese quant research prompt optimization
+  # en_default: baseline English prompts before zh prompt optimization
+  pack: zh_quant_v1
+  output_language: zh-CN
+  strict_json: true
+
+
+# ============================================================
 # PLANNING CONFIGURATION
 # Controls parallel exploration direction generation
 # ============================================================

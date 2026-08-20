@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from pathlib import Path
 
@@ -7,6 +8,13 @@ import yaml
 from jinja2 import Environment, StrictUndefined
 
 from quantaalpha.pipeline.planning import _parse_directions
+from quantaalpha.prompting import (
+    PROMPT_PACK_ENV,
+    configure_prompting,
+    get_prompt_pack_metadata,
+    resolve_factor_prompts_path,
+    resolve_planning_prompt_path,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +25,45 @@ def load_yaml(path: str) -> dict:
 
 
 class PromptTemplateTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        os.environ.pop(PROMPT_PACK_ENV, None)
+
+    def test_prompt_pack_paths_resolve_for_ab_testing(self) -> None:
+        zh_meta = get_prompt_pack_metadata("zh_quant_v1")
+        en_meta = get_prompt_pack_metadata("en_default")
+
+        self.assertEqual(zh_meta["output_language"], "zh-CN")
+        self.assertEqual(en_meta["output_language"], "en")
+
+        zh_planning = resolve_planning_prompt_path("planning_prompts.yaml", "zh_quant_v1")
+        en_planning = resolve_planning_prompt_path("planning_prompts.yaml", "en_default")
+        zh_factor = resolve_factor_prompts_path(
+            PROJECT_ROOT / "quantaalpha" / "factors" / "prompts" / "prompts.yaml",
+            "zh_quant_v1",
+        )
+        en_factor = resolve_factor_prompts_path(
+            PROJECT_ROOT / "quantaalpha" / "factors" / "prompts" / "prompts.yaml",
+            "en_default",
+        )
+
+        self.assertTrue(zh_planning.exists())
+        self.assertTrue(en_planning.exists())
+        self.assertTrue(zh_factor.exists())
+        self.assertTrue(en_factor.exists())
+        self.assertEqual(zh_planning.name, "planning_prompts.yaml")
+        self.assertEqual(en_planning.name, "planning_prompts_en_default.yaml")
+        self.assertEqual(zh_factor.name, "prompts.yaml")
+        self.assertEqual(en_factor.name, "prompts_en_default.yaml")
+
+    def test_env_prompt_pack_overrides_config_for_one_off_ab_runs(self) -> None:
+        os.environ[PROMPT_PACK_ENV] = "en_default"
+
+        metadata = configure_prompting({"pack": "zh_quant_v1"})
+        planning = resolve_planning_prompt_path("planning_prompts.yaml")
+
+        self.assertEqual(metadata["name"], "en_default")
+        self.assertEqual(planning.name, "planning_prompts_en_default.yaml")
+
     def test_planning_prompt_uses_plain_json_contract(self) -> None:
         prompts = load_yaml("quantaalpha/pipeline/prompts/planning_prompts.yaml")
 

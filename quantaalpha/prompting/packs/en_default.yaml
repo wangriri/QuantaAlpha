@@ -1,0 +1,7 @@
+name: en_default
+version: "pre-zh-prompt-optimization"
+output_language: en
+strict_json: false
+planning_prompt_file: planning_prompts_en_default.yaml
+factor_prompt_file: prompts_en_default.yaml
+description: 中文量化 prompt 优化前的英文默认提示词，用作 A/B 测试 baseline。

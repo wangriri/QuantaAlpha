@@ -37,6 +37,10 @@ from quantaalpha.log import logger
 from quantaalpha.log.time import measure_time
 from quantaalpha.llm.config import LLM_SETTINGS
 from quantaalpha.tracing import RunRecorder
+from quantaalpha.prompting import (
+    configure_prompting,
+    resolve_planning_prompt_path,
+)
 
 
 
@@ -398,7 +402,7 @@ def run_evolution_loop(
     # Generate initial directions
     planning_enabled = bool(planning_cfg.get("enabled", False))
     prompt_file = planning_cfg.get("prompt_file") or "planning_prompts.yaml"
-    prompt_path = Path(__file__).parent / "prompts" / str(prompt_file)
+    prompt_path = resolve_planning_prompt_path(prompt_file)
     
     planning_trace = {}
     if planning_enabled and initial_direction:
@@ -617,6 +621,8 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
         evolution_cfg = (run_cfg.get("evolution") or {}) if isinstance(run_cfg, dict) else {}
         quality_gate_cfg = (run_cfg.get("quality_gate") or {}) if isinstance(run_cfg, dict) else {}
         backtest_cfg = (run_cfg.get("backtest") or {}) if isinstance(run_cfg, dict) else {}
+        prompting_cfg = (run_cfg.get("prompting") or {}) if isinstance(run_cfg, dict) else {}
+        prompt_pack_metadata = configure_prompting(prompting_cfg)
         backtest_timeout = backtest_cfg.get("timeout")
         trace_recorder = RunRecorder.create(
             project_root=_project_root,
@@ -632,6 +638,8 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
                 "evolution": evolution_cfg,
                 "quality_gate": quality_gate_cfg,
                 "backtest": backtest_cfg,
+                "prompting": prompting_cfg,
+                "prompt_pack": prompt_pack_metadata,
             },
         )
         logger.info(f"Run trace directory: {trace_recorder.run_dir}")
@@ -680,7 +688,7 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
             use_llm = bool(planning_cfg.get("use_llm", True))
             allow_fallback = bool(planning_cfg.get("allow_fallback", True))
             prompt_file = planning_cfg.get("prompt_file") or "planning_prompts.yaml"
-            prompt_path = Path(__file__).parent / "prompts" / str(prompt_file)
+            prompt_path = resolve_planning_prompt_path(prompt_file)
             if planning_enabled and direction:
                 directions, planning_trace = generate_parallel_directions_with_trace(
                     initial_direction=direction,
