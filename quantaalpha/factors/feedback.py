@@ -213,6 +213,10 @@ class QlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Feedback):
 
 qa_feedback_prompts = Prompts(file_path=Path(__file__).parent / "prompts" / "prompts.yaml")
 class AlphaAgentQlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Feedback):
+    def __init__(self, scen) -> None:
+        super().__init__(scen)
+        self.last_feedback_trace: dict = {}
+
     def generate_feedback(self, exp: Experiment, hypothesis: Hypothesis, trace: Trace) -> HypothesisFeedback:
         """
         Generate feedback for the given experiment and hypothesis.
@@ -295,6 +299,7 @@ class AlphaAgentQlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Fee
         # Call the APIBackend to generate the response for hypothesis feedback with retry
         response_json = None
         last_error = None
+        response = ""
         
         for attempt in range(MAX_JSON_PARSE_RETRIES):
             try:
@@ -315,6 +320,17 @@ class AlphaAgentQlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Fee
         
         if response_json is None:
             logger.error(f"[AlphaAgent] JSON parse still failed after {MAX_JSON_PARSE_RETRIES} attempts")
+            self.last_feedback_trace = {
+                "ok": False,
+                "raw": {
+                    "system_prompt": sys_prompt,
+                    "user_prompt": usr_prompt,
+                    "response_text": response,
+                },
+                "parsed": {"ok": False, "data": None},
+                "parser": {"attempt_count": MAX_JSON_PARSE_RETRIES, "warnings": [str(last_error)]},
+                "error": str(last_error),
+            }
             return HypothesisFeedback(
                 observations="JSON parse failed; could not extract feedback",
                 hypothesis_evaluation="Unable to evaluate",
@@ -330,13 +346,24 @@ class AlphaAgentQlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Fee
         reason = response_json.get("Reasoning", "No reasoning provided")
         decision = convert2bool(response_json.get("Replace Best Result", "no"))
 
-        return HypothesisFeedback(
+        feedback = HypothesisFeedback(
             observations=observations,
             hypothesis_evaluation=hypothesis_evaluation,
             new_hypothesis=new_hypothesis,
             reason=reason,
             decision=decision,
         )
+        self.last_feedback_trace = {
+            "ok": True,
+            "raw": {
+                "system_prompt": sys_prompt,
+                "user_prompt": usr_prompt,
+                "response_text": response,
+            },
+            "parsed": {"ok": True, "data": response_json},
+            "parser": {"attempt_count": attempt + 1, "warnings": []},
+        }
+        return feedback
 
 
 class QlibModelHypothesisExperiment2Feedback(HypothesisExperiment2Feedback):

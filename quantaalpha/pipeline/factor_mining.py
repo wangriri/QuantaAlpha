@@ -23,6 +23,7 @@ import os
 import pickle
 from quantaalpha.pipeline.settings import ALPHA_AGENT_FACTOR_PROP_SETTING
 from quantaalpha.pipeline.planning import generate_parallel_directions
+from quantaalpha.pipeline.planning import generate_parallel_directions_with_trace
 from quantaalpha.pipeline.planning import load_run_config
 from quantaalpha.pipeline.loop import AlphaAgentLoop
 from quantaalpha.pipeline.evolution import (
@@ -35,6 +36,7 @@ from quantaalpha.core.exception import FactorEmptyError
 from quantaalpha.log import logger
 from quantaalpha.log.time import measure_time
 from quantaalpha.llm.config import LLM_SETTINGS
+from quantaalpha.tracing import RunRecorder
 
 
 
@@ -95,18 +97,36 @@ def _run_branch(
     log_root: str,
     log_prefix: str,
     quality_gate_cfg: dict = None,
+    backtest_timeout: int | None = None,
+    trace_run_dir: str | None = None,
 ):
     if log_root:
         branch_name = f"{log_prefix}_{idx:02d}"
         branch_log = Path(log_root) / branch_name
         branch_log.mkdir(parents=True, exist_ok=True)
         logger.set_trace_path(branch_log)
+    task_recorder = None
+    if trace_run_dir:
+        run_recorder = RunRecorder.open(trace_run_dir)
+        task = {
+            "phase": RoundPhase.ORIGINAL,
+            "direction_id": max(0, idx - 1),
+            "parent_trajectories": [],
+            "strategy_suffix": "",
+            "round_idx": 0,
+            "task_index": max(0, idx - 1),
+        }
+        run_recorder.write_round_summary(0, RoundPhase.ORIGINAL.value, [task])
+        task_recorder = run_recorder.task_recorder(task, direction=direction)
+
     model_loop = AlphaAgentLoop(
         ALPHA_AGENT_FACTOR_PROP_SETTING,
         potential_direction=direction,
         stop_event=None,
         use_local=use_local,
         quality_gate_config=quality_gate_cfg or {},
+        backtest_timeout=backtest_timeout,
+        task_recorder=task_recorder,
     )
     model_loop.user_initial_direction = direction
     model_loop.run(step_n=step_n, stop_event=None)
@@ -121,6 +141,8 @@ def _run_evolution_task(
     log_root: str,
     stop_event: threading.Event | None,
     quality_gate_cfg: dict[str, Any] | None = None,
+    backtest_timeout: int | None = None,
+    trace_run_dir: str | None = None,
 ) -> dict[str, Any]:
     """
     Run a single evolution task (one small loop).
@@ -163,6 +185,12 @@ def _run_evolution_task(
 
     logger.info(f"Starting evolution task: phase={phase.value}, round={round_idx}, direction={direction_id}")
 
+    task_recorder = None
+    if trace_run_dir:
+        run_recorder = RunRecorder.open(trace_run_dir)
+        run_recorder.write_round_summary(round_idx, phase.value, [task])
+        task_recorder = run_recorder.task_recorder(task, direction=direction)
+
     # Create and run loop
     model_loop = AlphaAgentLoop(
         ALPHA_AGENT_FACTOR_PROP_SETTING,
@@ -176,6 +204,8 @@ def _run_evolution_task(
         direction_id=direction_id,
         round_idx=round_idx,
         quality_gate_config=quality_gate_cfg or {},
+        backtest_timeout=backtest_timeout,
+        task_recorder=task_recorder,
     )
     model_loop.user_initial_direction = user_direction
     
@@ -184,6 +214,8 @@ def _run_evolution_task(
 
     traj_data = model_loop._get_trajectory_data()
     traj_data["task"] = task
+    if trace_run_dir:
+        RunRecorder.open(trace_run_dir).flush_graph(status="running")
     
     return traj_data
 
@@ -197,6 +229,9 @@ def _parallel_task_worker(
     log_root: str,
     result_queue: Queue,
     task_idx: int,
+    quality_gate_cfg: dict[str, Any] | None = None,
+    backtest_timeout: int | None = None,
+    trace_run_dir: str | None = None,
 ):
     """
     Worker for parallel evolution tasks. Runs one evolution task in a separate process and puts result in queue.
@@ -217,6 +252,9 @@ def _parallel_task_worker(
             user_direction=user_direction,
             log_root=log_root,
             stop_event=None,
+            quality_gate_cfg=quality_gate_cfg,
+            backtest_timeout=backtest_timeout,
+            trace_run_dir=trace_run_dir,
         )
         result_queue.put({
             "success": True,
@@ -261,6 +299,9 @@ def _run_tasks_parallel(
     use_local: bool,
     user_direction: str | None,
     log_root: str,
+    quality_gate_cfg: dict[str, Any] | None = None,
+    backtest_timeout: int | None = None,
+    trace_run_dir: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Run multiple evolution tasks in parallel.
@@ -288,6 +329,9 @@ def _run_tasks_parallel(
                 log_root,
                 result_queue,
                 idx,
+                quality_gate_cfg,
+                backtest_timeout,
+                trace_run_dir,
             ),
         )
         p.start()
@@ -322,6 +366,8 @@ def run_evolution_loop(
     planning_cfg: dict[str, Any],
     stop_event: threading.Event | None = None,
     quality_gate_cfg: dict[str, Any] | None = None,
+    backtest_timeout: int | None = None,
+    trace_recorder: RunRecorder | None = None,
 ):
     """
     Run evolution loop: Original -> Mutation -> Crossover -> Mutation -> ...
@@ -354,8 +400,9 @@ def run_evolution_loop(
     prompt_file = planning_cfg.get("prompt_file") or "planning_prompts.yaml"
     prompt_path = Path(__file__).parent / "prompts" / str(prompt_file)
     
+    planning_trace = {}
     if planning_enabled and initial_direction:
-        directions = generate_parallel_directions(
+        directions, planning_trace = generate_parallel_directions_with_trace(
             initial_direction=initial_direction,
             n=num_directions,
             prompt_file=prompt_path,
@@ -365,8 +412,19 @@ def run_evolution_loop(
         )
     elif planning_enabled:
         directions = [None] * num_directions
+        planning_trace = {"directions": directions, "fallback_used": False, "raw": {}, "parser": {}}
     else:
         directions = [initial_direction] if initial_direction else [None]
+        planning_trace = {"directions": directions, "fallback_used": False, "raw": {}, "parser": {}}
+
+    if trace_recorder is not None:
+        raw = planning_trace.get("raw", {})
+        trace_recorder.write_planning_prompt(
+            system_prompt=raw.get("system_prompt", ""),
+            user_prompt=raw.get("user_prompt", ""),
+            variables=raw.get("variables", {"initial_direction": initial_direction, "n": len(directions)}),
+        )
+        trace_recorder.write_planning_output(planning_trace)
 
     logger.info(f"Generated {len(directions)} exploration directions")
     for i, d in enumerate(directions):
@@ -438,6 +496,9 @@ def run_evolution_loop(
                 use_local=use_local,
                 user_direction=initial_direction,
                 log_root=log_root,
+                quality_gate_cfg=quality_gate_cfg,
+                backtest_timeout=backtest_timeout,
+                trace_run_dir=str(trace_recorder.run_dir) if trace_recorder else None,
             )
             
             completed_tasks = []
@@ -480,6 +541,8 @@ def run_evolution_loop(
                     log_root=log_root,
                     stop_event=stop_event,
                     quality_gate_cfg=quality_gate_cfg,
+                    backtest_timeout=backtest_timeout,
+                    trace_run_dir=str(trace_recorder.run_dir) if trace_recorder else None,
                 )
                 trajectory = controller.create_trajectory_from_loop_result(
                     task=task,
@@ -533,6 +596,8 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
         quantaalpha mine --direction "[Initial Direction]" --config_path configs/experiment.yaml
 
     """
+    trace_recorder: RunRecorder | None = None
+    run_error: str | None = None
     try:
         from quantaalpha.core.conf import RD_AGENT_SETTINGS
         logger.info("="*60)
@@ -551,6 +616,25 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
         exec_cfg = (run_cfg.get("execution") or {}) if isinstance(run_cfg, dict) else {}
         evolution_cfg = (run_cfg.get("evolution") or {}) if isinstance(run_cfg, dict) else {}
         quality_gate_cfg = (run_cfg.get("quality_gate") or {}) if isinstance(run_cfg, dict) else {}
+        backtest_cfg = (run_cfg.get("backtest") or {}) if isinstance(run_cfg, dict) else {}
+        backtest_timeout = backtest_cfg.get("timeout")
+        trace_recorder = RunRecorder.create(
+            project_root=_project_root,
+            initial_direction=direction,
+            config_path=config_file,
+            run_cfg=run_cfg,
+            execution_context={
+                "path": path,
+                "step_n": step_n,
+                "evolution_mode": evolution_mode,
+                "planning": planning_cfg,
+                "execution": exec_cfg,
+                "evolution": evolution_cfg,
+                "quality_gate": quality_gate_cfg,
+                "backtest": backtest_cfg,
+            },
+        )
+        logger.info(f"Run trace directory: {trace_recorder.run_dir}")
 
         if evolution_mode is not None:
             use_evolution = evolution_mode
@@ -585,6 +669,8 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
                 planning_cfg=planning_cfg,
                 stop_event=stop_event,
                 quality_gate_cfg=quality_gate_cfg,
+                backtest_timeout=backtest_timeout,
+                trace_recorder=trace_recorder,
             )
         
         elif path is None:
@@ -596,7 +682,7 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
             prompt_file = planning_cfg.get("prompt_file") or "planning_prompts.yaml"
             prompt_path = Path(__file__).parent / "prompts" / str(prompt_file)
             if planning_enabled and direction:
-                directions = generate_parallel_directions(
+                directions, planning_trace = generate_parallel_directions_with_trace(
                     initial_direction=direction,
                     n=n_dirs,
                     prompt_file=prompt_path,
@@ -606,6 +692,16 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
                 )
             else:
                 directions = [direction] if direction else [None]
+                planning_trace = {"directions": directions, "fallback_used": False, "raw": {}, "parser": {}}
+
+            if trace_recorder is not None:
+                raw = planning_trace.get("raw", {})
+                trace_recorder.write_planning_prompt(
+                    system_prompt=raw.get("system_prompt", ""),
+                    user_prompt=raw.get("user_prompt", ""),
+                    variables=raw.get("variables", {"initial_direction": direction, "n": len(directions)}),
+                )
+                trace_recorder.write_planning_output(planning_trace)
 
             log_root = exec_cfg.get("branch_log_root") or "log"
             log_prefix = exec_cfg.get("branch_log_prefix") or "branch"
@@ -619,7 +715,17 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
                         logger.info(f"[Planning] Branch {idx}/{len(directions)} direction: {dir_text}")
                     p = Process(
                         target=_run_branch,
-                        args=(dir_text, step_n, use_local, idx, log_root if use_branch_logs else "", log_prefix),
+                        args=(
+                            dir_text,
+                            step_n,
+                            use_local,
+                            idx,
+                            log_root if use_branch_logs else "",
+                            log_prefix,
+                            quality_gate_cfg,
+                            backtest_timeout,
+                            str(trace_recorder.run_dir) if trace_recorder else None,
+                        ),
                     )
                     p.start()
                     procs.append(p)
@@ -634,12 +740,26 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
                         branch_log = Path(log_root) / branch_name
                         branch_log.mkdir(parents=True, exist_ok=True)
                         logger.set_trace_path(branch_log)
+                    task_recorder = None
+                    if trace_recorder is not None:
+                        task = {
+                            "phase": RoundPhase.ORIGINAL,
+                            "direction_id": max(0, idx - 1),
+                            "parent_trajectories": [],
+                            "strategy_suffix": "",
+                            "round_idx": 0,
+                            "task_index": max(0, idx - 1),
+                        }
+                        trace_recorder.write_round_summary(0, RoundPhase.ORIGINAL.value, [task])
+                        task_recorder = trace_recorder.task_recorder(task, direction=dir_text)
                     model_loop = AlphaAgentLoop(
                         ALPHA_AGENT_FACTOR_PROP_SETTING,
                         potential_direction=dir_text,
                         stop_event=stop_event,
                         use_local=use_local,
                         quality_gate_config=quality_gate_cfg,
+                        backtest_timeout=backtest_timeout,
+                        task_recorder=task_recorder,
                     )
                     model_loop.user_initial_direction = direction
                     model_loop.run(step_n=step_n, stop_event=stop_event)
@@ -647,9 +767,14 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
             model_loop = AlphaAgentLoop.load(path, use_local=use_local)
             model_loop.run(step_n=step_n, stop_event=stop_event)
     except Exception as e:
+        run_error = str(e)
+        if trace_recorder is not None:
+            trace_recorder.write_run_complete(status="failed", error=run_error)
         logger.error(f"Error during execution: {str(e)}")
         raise
     finally:
+        if trace_recorder is not None and run_error is None:
+            trace_recorder.write_run_complete(status="completed")
         logger.info("Run finished or terminated")
 
 if __name__ == "__main__":

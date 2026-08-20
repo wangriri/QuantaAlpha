@@ -74,6 +74,25 @@ def generate_parallel_directions(
     use_llm: bool = True,
     allow_fallback: bool = True,
 ) -> list[str]:
+    directions, _trace = generate_parallel_directions_with_trace(
+        initial_direction=initial_direction,
+        n=n,
+        prompt_file=prompt_file,
+        max_attempts=max_attempts,
+        use_llm=use_llm,
+        allow_fallback=allow_fallback,
+    )
+    return directions
+
+
+def generate_parallel_directions_with_trace(
+    initial_direction: str,
+    n: int,
+    prompt_file: Path,
+    max_attempts: int = 5,
+    use_llm: bool = True,
+    allow_fallback: bool = True,
+) -> tuple[list[str], dict[str, Any]]:
     n = max(1, int(n))
     prompts = _load_prompts(prompt_file)
     sys_tpl = prompts.get("system", "")
@@ -87,23 +106,47 @@ def generate_parallel_directions(
             output_format = output_format.replace("{n}", str(n))
         user_prompt = f"{user_prompt}\n\n{output_format}"
 
+    trace: dict[str, Any] = {
+        "raw": {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "variables": {"initial_direction": initial_direction, "n": n},
+            "responses": [],
+        },
+        "parser": {"attempt_count": 0, "warnings": []},
+        "fallback_used": False,
+        "directions": [],
+    }
+
     if not use_llm:
-        return _fallback_directions(initial_direction, n) if allow_fallback else []
+        directions = _fallback_directions(initial_direction, n) if allow_fallback else []
+        trace["fallback_used"] = bool(directions)
+        trace["directions"] = directions
+        return directions, trace
 
     for attempt in range(1, max_attempts + 1):
+        trace["parser"]["attempt_count"] = attempt
         try:
             resp = APIBackend().build_messages_and_create_chat_completion(
                 user_prompt=user_prompt, system_prompt=system_prompt, json_mode=False
             )
+            trace["raw"]["responses"].append({"attempt": attempt, "response_text": resp})
             directions = _parse_directions(resp, n)
             if directions:
-                return directions[:n]
+                trace["directions"] = directions[:n]
+                return directions[:n], trace
             system_prompt += "\n\nStrictly output valid JSON. No extra text."
+            trace["parser"]["warnings"].append(f"Planning parse failed at attempt {attempt}")
             logger.warning(f"Planning parse failed (attempt {attempt}), retrying...")
         except Exception as exc:
+            trace["raw"]["responses"].append({"attempt": attempt, "error": str(exc)})
+            trace["parser"]["warnings"].append(f"Planning LLM call failed at attempt {attempt}: {exc}")
             logger.warning(f"Planning LLM call failed (attempt {attempt}): {exc}")
 
-    return _fallback_directions(initial_direction, n) if allow_fallback else []
+    directions = _fallback_directions(initial_direction, n) if allow_fallback else []
+    trace["fallback_used"] = bool(directions)
+    trace["directions"] = directions
+    return directions, trace
 
 
 def load_run_config(config_path: Path) -> dict[str, Any]:
@@ -114,4 +157,3 @@ def load_run_config(config_path: Path) -> dict[str, Any]:
     except Exception as exc:
         logger.warning(f"Failed to load run config: {exc}")
         return {}
-

@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 from typing import List, Tuple
@@ -203,6 +204,7 @@ class AlphaAgentHypothesisGen(FactorHypothesisGen):
     def __init__(self, scen: Scenario, potential_direction: str=None) -> Tuple[dict, bool]:
         super().__init__(scen)
         self.potential_direction = potential_direction
+        self.last_generation_trace: dict = {}
 
     def prepare_context(self, trace: Trace, history_limit: int = DEFAULT_HISTORY_LIMIT) -> Tuple[dict, bool]:
         
@@ -273,6 +275,21 @@ class AlphaAgentHypothesisGen(FactorHypothesisGen):
 
                 resp = APIBackend().build_messages_and_create_chat_completion(user_prompt, system_prompt, json_mode=json_flag)
                 hypothesis = self.convert_response(resp)
+                self.last_generation_trace = {
+                    "ok": True,
+                    "raw": {
+                        "system_prompt": system_prompt,
+                        "user_prompt": user_prompt,
+                        "response_text": resp,
+                        "variables": {
+                            "history_limit": history_limit,
+                            "round": len(trace.hist),
+                            "potential_direction": self.potential_direction,
+                        },
+                    },
+                    "parsed": {"ok": True, "data": hypothesis},
+                    "parser": {"attempt_count": DEFAULT_HISTORY_LIMIT - history_limit + 1, "warnings": []},
+                }
                 return hypothesis
             
             except Exception as e:
@@ -306,6 +323,17 @@ class AlphaAgentHypothesisGen(FactorHypothesisGen):
         )
         resp = APIBackend().build_messages_and_create_chat_completion(user_prompt, system_prompt, json_mode=json_flag)
         hypothesis = self.convert_response(resp)
+        self.last_generation_trace = {
+            "ok": True,
+            "raw": {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "response_text": resp,
+                "variables": {"history_limit": MIN_HISTORY_LIMIT, "round": len(trace.hist)},
+            },
+            "parsed": {"ok": True, "data": hypothesis},
+            "parser": {"attempt_count": DEFAULT_HISTORY_LIMIT, "warnings": ["minimum_history_limit_used"]},
+        }
         return hypothesis
     
     
@@ -348,6 +376,7 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
         # Initialize consistency checker if enabled
         self.consistency_enabled = consistency_enabled
         self._quality_gate = None
+        self.last_conversion_trace: dict = {}
         
     @property
     def quality_gate(self):
@@ -435,36 +464,76 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
         # Detect duplicated sub-expressions
         flag = False
         expression_duplication_prompt = None
+        attempts = []
+        final_response = ""
+        final_response_dict = None
         while True:
             if flag:
                 break
                 
             resp = APIBackend().build_messages_and_create_chat_completion(user_prompt, system_prompt, json_mode=json_flag)
+            final_response = resp
+            attempt_record = {
+                "attempt_index": len(attempts),
+                "raw": {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "response_text": resp,
+                },
+                "parsed": {"ok": False, "data": None},
+                "validation": {
+                    "json_parse_passed": False,
+                    "expression_parse_passed": False,
+                    "operator_passed": None,
+                    "complexity_passed": None,
+                    "redundancy_passed": None,
+                    "consistency_passed": None,
+                    "final_decision": "retry",
+                },
+                "feedback_to_next_attempt": None,
+            }
             try:
                 response_dict = robust_json_parse(resp)
+                final_response_dict = response_dict
+                attempt_record["parsed"] = {"ok": True, "data": response_dict}
+                attempt_record["validation"]["json_parse_passed"] = True
             except json.JSONDecodeError as e:
+                attempt_record["error"] = str(e)
+                attempts.append(copy.deepcopy(attempt_record))
                 logger.warning(f"JSON parse failed: {e}, retrying...")
                 continue
             proposed_names = []
             proposed_exprs = []
             
             for i, factor_name in enumerate(response_dict):
+                attempt_record["factor_index"] = i
+                attempt_record["factor_name"] = factor_name
                 factor_data = response_dict.get(factor_name, {})
                 if not isinstance(factor_data, dict):
                     continue
                 expr = factor_data.get("expression", "")
+                attempt_record["raw"]["raw_expression"] = expr
                 description = factor_data.get("description", "")
                 formulation = factor_data.get("formulation", "")
                 variables = factor_data.get("variables", {})
                 
                 # Check if expression is parsable
                 if not self.factor_regulator.is_parsable(expr):
+                    attempt_record["validation"]["expression_parse_passed"] = False
+                    attempt_record["feedback_to_next_attempt"] = f"Failed to parse expression: {expr}"
+                    attempts.append(copy.deepcopy(attempt_record))
                     logger.info(f"Failed to parse expr: {expr}, retrying...")
                     break
+                attempt_record["validation"]["expression_parse_passed"] = True
                 
                 success, eval_dict = self.factor_regulator.evaluate(expr)
                 if not success:
+                    attempt_record["validation"]["operator_passed"] = False
+                    attempt_record["validation"]["eval_dict"] = eval_dict
+                    attempts.append(copy.deepcopy(attempt_record))
                     break
+                attempt_record["validation"]["operator_passed"] = True
+                attempt_record["validation"]["eval_dict"] = eval_dict
                 
                 # Consistency check (if enabled)
                 if self.consistency_enabled and self.quality_gate is not None:
@@ -494,8 +563,14 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                                 break
                         
                         if not passed:
+                            attempt_record["validation"]["consistency_passed"] = False
+                            attempt_record["validation"]["consistency_feedback"] = feedback
                             logger.warning(f"Consistency check failed: {factor_name}, feedback: {feedback}")
+                        else:
+                            attempt_record["validation"]["consistency_passed"] = True
                     except Exception as e:
+                        attempt_record["validation"]["consistency_passed"] = False
+                        attempt_record["validation"]["consistency_error"] = str(e)
                         logger.warning(f"Consistency check error: {e}")
                 
                 # If expression has problems, regenerate with feedback
@@ -536,6 +611,10 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                         expression_duplication_prompt = '\n\n'.join([expression_duplication_prompt, feedback_item])
                     else:
                         expression_duplication_prompt = feedback_item
+                    attempt_record["validation"]["complexity_passed"] = False
+                    attempt_record["validation"]["redundancy_passed"] = False
+                    attempt_record["feedback_to_next_attempt"] = feedback_item
+                    attempts.append(copy.deepcopy(attempt_record))
                     
                     user_prompt = (
                         Environment(undefined=StrictUndefined)
@@ -552,6 +631,10 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                     )
                     break
                 else:
+                    attempt_record["validation"]["complexity_passed"] = True
+                    attempt_record["validation"]["redundancy_passed"] = True
+                    attempt_record["validation"]["final_decision"] = "accepted"
+                    attempts.append(copy.deepcopy(attempt_record))
                     proposed_names.append(factor_name)
                     proposed_exprs.append(expr)
                     if i == len(response_dict) - 1:
@@ -562,9 +645,20 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
 
         # Add valid factors to the factor regulator
         self.factor_regulator.add_factor(proposed_names, proposed_exprs)
-                
-                
-        return self.convert_response(resp, trace)
+        exp = self.convert_response(final_response, trace)
+        self.last_conversion_trace = {
+            "ok": True,
+            "raw": {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "response_text": final_response,
+                "variables": {"history_limit": history_limit},
+            },
+            "parsed": {"ok": True, "data": final_response_dict},
+            "parser": {"attempt_count": len(attempts), "warnings": []},
+            "attempts": attempts,
+        }
+        return exp
     
 
     def convert_response(self, response: str, trace: Trace) -> FactorExperiment:

@@ -21,6 +21,8 @@ export interface TaskConfig {
   useCustomMiningDirection?: boolean;
   numDirections?: number;
   maxRounds?: number;
+  maxLoops?: number;
+  factorsPerHypothesis?: number;
   librarySuffix?: string;
 
   // LLM configuration

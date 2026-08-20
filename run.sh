@@ -30,13 +30,17 @@ else
 fi
 
 # =============================================================================
-# Activate conda environment
+# Activate Python environment
 # =============================================================================
-eval "$(conda shell.bash hook)" 2>/dev/null
-conda activate "${CONDA_ENV_NAME:-quantaalpha}" 2>/dev/null
+if [ -f "${SCRIPT_DIR}/.venv/bin/activate" ]; then
+    source "${SCRIPT_DIR}/.venv/bin/activate"
+else
+    eval "$(conda shell.bash hook)" 2>/dev/null
+    conda activate "${CONDA_ENV_NAME:-quantaalpha}" 2>/dev/null
 
-if [ $? -ne 0 ]; then
-    source activate "${CONDA_ENV_NAME:-quantaalpha}" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        source activate "${CONDA_ENV_NAME:-quantaalpha}" 2>/dev/null
+    fi
 fi
 
 if ! command -v quantaalpha &> /dev/null; then

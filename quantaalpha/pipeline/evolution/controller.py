@@ -238,6 +238,7 @@ class EvolutionController:
                     "direction_id": idx,
                     "parent_trajectories": [parent],
                     "strategy_suffix": suffix,
+                    "mutation_trace": getattr(self.mutation_op, "last_generation_trace", {}),
                     "round_idx": self._current_round,
                 })
             
@@ -273,6 +274,7 @@ class EvolutionController:
                     "direction_id": idx,
                     "parent_trajectories": parents,
                     "strategy_suffix": suffix,
+                    "crossover_trace": getattr(self.crossover_op, "last_generation_trace", {}),
                     "round_idx": self._current_round,
                 })
             
@@ -439,6 +441,7 @@ class EvolutionController:
                 "direction_id": direction_id,
                 "parent_trajectories": [parent],
                 "strategy_suffix": suffix,
+                "mutation_trace": getattr(self.mutation_op, "last_generation_trace", {}),
                 "round_idx": self._current_round,
             }
             
@@ -672,6 +675,7 @@ class EvolutionController:
             "direction_id": self._crossover_idx,  # Use crossover index as direction
             "parent_trajectories": parents,
             "strategy_suffix": suffix,
+            "crossover_trace": getattr(self.crossover_op, "last_generation_trace", {}),
             "round_idx": self._current_round,
         }
         
@@ -933,4 +937,3 @@ class EvolutionController:
             self._prepare_crossover_groups()
         
         logger.info(f"Loaded evolution state from {path}")
-

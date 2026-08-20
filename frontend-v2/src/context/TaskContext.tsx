@@ -24,6 +24,7 @@ import {
   cancelBacktest as apiCancelBacktest,
   connectMiningWs,
   healthCheck,
+  getSystemConfig,
 } from '@/services/api';
 import type { BacktestStartParams } from '@/services/api';
 import { getDefaultMiningDirection } from '@/utils/miningDirections';
@@ -222,10 +223,16 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const startRealMining = useCallback(
     async (config: TaskConfig) => {
       try {
-        // Load defaults from localStorage
         let defaults: any = {};
+        try {
+          const systemConfig = await getSystemConfig();
+          defaults = systemConfig.data?.experimentConfig || {};
+        } catch {
+          // Fall back to the last Settings-page cache when backend config fetch is unavailable.
+        }
+
         const savedConfig = localStorage.getItem('quantaalpha_config');
-        if (savedConfig) {
+        if (!Object.keys(defaults).length && savedConfig) {
           try {
             defaults = JSON.parse(savedConfig);
           } catch {}
@@ -237,11 +244,14 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
             : (config.userInput && config.userInput.trim()) || getDefaultMiningDirection() || '价量因子挖掘';
         const resp = await apiStartMining({
           direction,
-          numDirections: config.numDirections || defaults.defaultNumDirections || 2,
-          maxRounds: config.maxRounds || defaults.defaultMaxRounds || 3,
+          numDirections: config.numDirections || defaults.defaultNumDirections || 1,
+          maxRounds: config.maxRounds || defaults.defaultMaxRounds || 1,
+          maxLoops: config.maxLoops || defaults.defaultMaxLoops || 1,
+          factorsPerHypothesis: config.factorsPerHypothesis || defaults.defaultFactorsPerHypothesis || 1,
           librarySuffix: config.librarySuffix || defaults.defaultLibrarySuffix || undefined,
-          qualityGateEnabled: config.qualityGateEnabled ?? defaults.qualityGateEnabled ?? true,
+          qualityGateEnabled: config.qualityGateEnabled ?? defaults.qualityGateEnabled ?? false,
           parallelEnabled: config.parallelExecution ?? defaults.parallelExecution ?? false,
+          backtestTimeout: config.backtestTimeout || defaults.backtestTimeout || undefined,
         });
         if (!resp.success || !resp.data) throw new Error(resp.error || 'Failed');
 

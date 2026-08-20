@@ -42,6 +42,7 @@ export interface MiningStartParams {
   librarySuffix?: string;
   qualityGateEnabled?: boolean;
   parallelEnabled?: boolean;
+  backtestTimeout?: number;
 }
 
 export async function startMining(params: MiningStartParams) {
@@ -160,13 +161,32 @@ export async function cancelBacktest(taskId: string) {
 
 // ========================== System Config API ==========================
 
+export interface ExperimentDefaults {
+  defaultNumDirections: number;
+  defaultMaxRounds: number;
+  defaultMaxLoops: number;
+  defaultFactorsPerHypothesis: number;
+  defaultMarket: 'csi300' | 'csi500' | 'sp500';
+  parallelExecution: boolean;
+  qualityGateEnabled: boolean;
+  backtestTimeout: number;
+  defaultLibrarySuffix: string;
+}
+
+export interface SystemConfigResponse {
+  env: Record<string, string>;
+  experimentConfig: ExperimentDefaults;
+  experimentYaml: string;
+  factorLibraries: string[];
+}
+
 export async function getSystemConfig() {
-  return request<{ env: Record<string, string>; experimentYaml: string; factorLibraries: string[] }>(
+  return request<SystemConfigResponse>(
     '/api/v1/system/config'
   );
 }
 
-export async function updateSystemConfig(update: Record<string, string>) {
+export async function updateSystemConfig(update: Record<string, string | number | boolean>) {
   return request('/api/v1/system/config', {
     method: 'PUT',
     body: JSON.stringify(update),

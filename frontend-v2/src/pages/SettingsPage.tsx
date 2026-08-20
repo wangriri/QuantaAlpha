@@ -17,6 +17,8 @@ interface SystemConfig {
   // Parameters
   defaultNumDirections: number;
   defaultMaxRounds: number;
+  defaultMaxLoops: number;
+  defaultFactorsPerHypothesis: number;
   defaultMarket: 'csi300' | 'csi500' | 'sp500';
   // Advanced
   parallelExecution: boolean;
@@ -30,19 +32,26 @@ interface SystemConfig {
 
 const DEFAULT_CONFIG: SystemConfig = {
   apiKey: '',
-  apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-  modelName: 'deepseek-v3',
-  qlibDataPath: '',
-  resultsDir: '',
-  defaultNumDirections: 2,
-  defaultMaxRounds: 3,
+  apiUrl: 'https://api.deepseek.com',
+  modelName: 'deepseek-chat',
+  qlibDataPath: '/Users/wangjiayi/Downloads/QuantaAlpha/data/qlib/cn_data',
+  resultsDir: '/Users/wangjiayi/Downloads/QuantaAlpha/data/results',
+  defaultNumDirections: 1,
+  defaultMaxRounds: 1,
+  defaultMaxLoops: 1,
+  defaultFactorsPerHypothesis: 1,
   defaultMarket: 'csi300',
-  parallelExecution: true,
-  qualityGateEnabled: true,
+  parallelExecution: false,
+  qualityGateEnabled: false,
   backtestTimeout: 600,
   defaultLibrarySuffix: '',
   miningDirectionMode: 'selected',
-  selectedMiningDirectionIndices: [0, 1, 2],
+  selectedMiningDirectionIndices: [0],
+};
+
+const parseNumberField = (value: string, fallback: number) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
 };
 
 type SettingsTab = 'api' | 'data' | 'params' | 'directions';
@@ -91,19 +100,22 @@ export const SettingsPage: React.FC = () => {
             if (Array.isArray(parsed.selectedMiningDirectionIndices)) selectedMiningDirectionIndices = parsed.selectedMiningDirectionIndices;
           } catch { /* use defaults */ }
         }
+        const experimentConfig = resp.data.experimentConfig || {};
         setConfig({
           apiKey: env.OPENAI_API_KEY || '',
           apiUrl: env.OPENAI_BASE_URL || DEFAULT_CONFIG.apiUrl,
           modelName: env.CHAT_MODEL || DEFAULT_CONFIG.modelName,
           qlibDataPath: env.QLIB_DATA_DIR || '',
           resultsDir: env.DATA_RESULTS_DIR || '',
-          defaultNumDirections: 2,
-          defaultMaxRounds: 3,
-          defaultMarket: 'csi300',
-          parallelExecution: true,
-          qualityGateEnabled: true,
-          backtestTimeout: 600,
-          defaultLibrarySuffix: '',
+          defaultNumDirections: experimentConfig.defaultNumDirections ?? DEFAULT_CONFIG.defaultNumDirections,
+          defaultMaxRounds: experimentConfig.defaultMaxRounds ?? DEFAULT_CONFIG.defaultMaxRounds,
+          defaultMaxLoops: experimentConfig.defaultMaxLoops ?? DEFAULT_CONFIG.defaultMaxLoops,
+          defaultFactorsPerHypothesis: experimentConfig.defaultFactorsPerHypothesis ?? DEFAULT_CONFIG.defaultFactorsPerHypothesis,
+          defaultMarket: experimentConfig.defaultMarket ?? DEFAULT_CONFIG.defaultMarket,
+          parallelExecution: experimentConfig.parallelExecution ?? DEFAULT_CONFIG.parallelExecution,
+          qualityGateEnabled: experimentConfig.qualityGateEnabled ?? DEFAULT_CONFIG.qualityGateEnabled,
+          backtestTimeout: experimentConfig.backtestTimeout ?? DEFAULT_CONFIG.backtestTimeout,
+          defaultLibrarySuffix: experimentConfig.defaultLibrarySuffix ?? DEFAULT_CONFIG.defaultLibrarySuffix,
           miningDirectionMode,
           selectedMiningDirectionIndices,
         });
@@ -142,7 +154,7 @@ export const SettingsPage: React.FC = () => {
 
     // Try to save to backend
     try {
-      const update: Record<string, string> = {};
+      const update: Record<string, string | number | boolean> = {};
       if (config.apiKey && !config.apiKey.includes('...')) {
         update.OPENAI_API_KEY = config.apiKey;
       }
@@ -153,6 +165,15 @@ export const SettingsPage: React.FC = () => {
       }
       if (config.qlibDataPath) update.QLIB_DATA_DIR = config.qlibDataPath;
       if (config.resultsDir) update.DATA_RESULTS_DIR = config.resultsDir;
+      update.DEFAULT_LIBRARY_SUFFIX = config.defaultLibrarySuffix;
+      update.defaultNumDirections = config.defaultNumDirections;
+      update.defaultMaxRounds = config.defaultMaxRounds;
+      update.defaultMaxLoops = config.defaultMaxLoops;
+      update.defaultFactorsPerHypothesis = config.defaultFactorsPerHypothesis;
+      update.defaultMarket = config.defaultMarket;
+      update.parallelExecution = config.parallelExecution;
+      update.qualityGateEnabled = config.qualityGateEnabled;
+      update.backtestTimeout = config.backtestTimeout;
 
       if (Object.keys(update).length > 0) {
         await updateSystemConfig(update);
@@ -169,8 +190,8 @@ export const SettingsPage: React.FC = () => {
 
   const handleReset = () => {
     if (confirm('确定要重置为默认配置吗？')) {
-      setConfig(DEFAULT_CONFIG);
-      setIsDirty(true);
+      loadConfig();
+      setIsDirty(false);
     }
   };
 
@@ -318,8 +339,8 @@ export const SettingsPage: React.FC = () => {
                   onChange={(e) => updateConfigField('modelName', e.target.value)}
                   className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                 >
-                  <option value="deepseek-v3">DeepSeek V3</option>
-                  <option value="deepseek-r1">DeepSeek R1</option>
+                  <option value="deepseek-chat">DeepSeek V3</option>
+                  <option value="deepseek-reasoner">DeepSeek R1</option>
                   <option value="qwen-max">Qwen Max</option>
                   <option value="qwen-plus">Qwen Plus</option>
                   <option value="gpt-4">GPT-4</option>
@@ -433,7 +454,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="number"
                     value={config.defaultNumDirections}
-                    onChange={(e) => updateConfigField('defaultNumDirections', parseInt(e.target.value))}
+                    onChange={(e) => updateConfigField('defaultNumDirections', parseNumberField(e.target.value, DEFAULT_CONFIG.defaultNumDirections))}
                     min={1}
                     max={10}
                     className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
@@ -448,13 +469,43 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="number"
                     value={config.defaultMaxRounds}
-                    onChange={(e) => updateConfigField('defaultMaxRounds', parseInt(e.target.value))}
+                    onChange={(e) => updateConfigField('defaultMaxRounds', parseNumberField(e.target.value, DEFAULT_CONFIG.defaultMaxRounds))}
                     min={1}
                     max={20}
                     className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
                     因子自我进化和优化的最大迭代次数 (1-20)
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">最大循环数</label>
+                  <input
+                    type="number"
+                    value={config.defaultMaxLoops}
+                    onChange={(e) => updateConfigField('defaultMaxLoops', parseNumberField(e.target.value, DEFAULT_CONFIG.defaultMaxLoops))}
+                    min={1}
+                    max={50}
+                    className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    每条挖掘路径的主循环次数 (1-50)
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">每个假设因子数</label>
+                  <input
+                    type="number"
+                    value={config.defaultFactorsPerHypothesis}
+                    onChange={(e) => updateConfigField('defaultFactorsPerHypothesis', parseNumberField(e.target.value, DEFAULT_CONFIG.defaultFactorsPerHypothesis))}
+                    min={1}
+                    max={20}
+                    className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    单个假设生成的候选因子数量 (1-20)
                   </p>
                 </div>
 
@@ -476,7 +527,7 @@ export const SettingsPage: React.FC = () => {
                   <input
                     type="number"
                     value={config.backtestTimeout}
-                    onChange={(e) => updateConfigField('backtestTimeout', parseInt(e.target.value))}
+                    onChange={(e) => updateConfigField('backtestTimeout', parseNumberField(e.target.value, DEFAULT_CONFIG.backtestTimeout))}
                     min={60}
                     max={3600}
                     className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"

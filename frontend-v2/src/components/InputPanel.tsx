@@ -13,12 +13,33 @@ interface InputPanelProps {
 export const InputPanel: React.FC<InputPanelProps> = ({ onSubmit, isRunning }) => {
   const [userInput, setUserInput] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [config, setConfig] = useState<Partial<TaskConfig>>({
-    numDirections: 2,
-    maxRounds: 7,
-    market: 'csi500',
-    parallelExecution: true,
-    qualityGateEnabled: true,
+  const [config, setConfig] = useState<Partial<TaskConfig>>(() => {
+    const saved = localStorage.getItem('quantaalpha_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return {
+          numDirections: parsed.defaultNumDirections ?? 1,
+          maxRounds: parsed.defaultMaxRounds ?? 1,
+          maxLoops: parsed.defaultMaxLoops ?? 1,
+          factorsPerHypothesis: parsed.defaultFactorsPerHypothesis ?? 1,
+          market: parsed.defaultMarket ?? 'csi300',
+          parallelExecution: parsed.parallelExecution ?? false,
+          qualityGateEnabled: parsed.qualityGateEnabled ?? false,
+          backtestTimeout: parsed.backtestTimeout ?? 600,
+        };
+      } catch {}
+    }
+    return {
+      numDirections: 1,
+      maxRounds: 1,
+      maxLoops: 1,
+      factorsPerHypothesis: 1,
+      market: 'csi300',
+      parallelExecution: false,
+      qualityGateEnabled: false,
+      backtestTimeout: 600,
+    };
   });
 
   const handleSubmit = () => {
@@ -125,13 +146,46 @@ export const InputPanel: React.FC<InputPanelProps> = ({ onSubmit, isRunning }) =
                   <select
                     value={config.market}
                     onChange={(e) =>
-                      setConfig({ ...config, market: e.target.value as 'csi500' | 'sp500' })
+                      setConfig({ ...config, market: e.target.value as 'csi300' | 'csi500' | 'sp500' })
                     }
                     className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
                   >
+                    <option value="csi300">CSI 300 (沪深300)</option>
                     <option value="csi500">CSI 500 (中证500)</option>
                     <option value="sp500">S&P 500</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    最大循环数
+                  </label>
+                  <input
+                    type="number"
+                    value={config.maxLoops}
+                    onChange={(e) =>
+                      setConfig({ ...config, maxLoops: parseInt(e.target.value) })
+                    }
+                    className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                    min={1}
+                    max={50}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">
+                    每个假设因子数
+                  </label>
+                  <input
+                    type="number"
+                    value={config.factorsPerHypothesis}
+                    onChange={(e) =>
+                      setConfig({ ...config, factorsPerHypothesis: parseInt(e.target.value) })
+                    }
+                    className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                    min={1}
+                    max={20}
+                  />
                 </div>
 
                 <div className="flex items-center gap-2">

@@ -18,14 +18,18 @@ fi
 echo "✅ Node.js: $(node --version)"
 
 # =============================================================================
-# 激活 conda 环境（使用与主实验相同的 quantaalpha 环境）
+# 激活 Python 环境（优先使用项目本地 .venv）
 # =============================================================================
-eval "$(conda shell.bash hook)" 2>/dev/null
 CONDA_ENV="${CONDA_ENV_NAME:-quantaalpha}"
-conda activate "${CONDA_ENV}" 2>/dev/null
+if [ -f "${PROJECT_ROOT}/.venv/bin/activate" ]; then
+    source "${PROJECT_ROOT}/.venv/bin/activate"
+else
+    eval "$(conda shell.bash hook)" 2>/dev/null
+    conda activate "${CONDA_ENV}" 2>/dev/null
 
-if [ $? -ne 0 ]; then
-    source activate "${CONDA_ENV}" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        source activate "${CONDA_ENV}" 2>/dev/null
+    fi
 fi
 
 if ! python -c "import quantaalpha" 2>/dev/null; then
@@ -33,7 +37,7 @@ if ! python -c "import quantaalpha" 2>/dev/null; then
     echo "请先运行: conda activate ${CONDA_ENV} && cd ${PROJECT_ROOT} && pip install -e ."
     exit 1
 fi
-echo "✅ Python: $(python --version) (conda env: ${CONDA_ENV})"
+echo "✅ Python: $(python --version)"
 
 # =============================================================================
 # 加载 .env 配置

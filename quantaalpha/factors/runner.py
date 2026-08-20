@@ -73,7 +73,12 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         return new_feature.iloc[:, IC_max[IC_max < 0.99].index]
 
     @cache_with_pickle(CachedRunner.get_cache_key, CachedRunner.assign_cached_result)
-    def develop(self, exp: QlibFactorExperiment, use_local: bool = True) -> QlibFactorExperiment:
+    def develop(
+        self,
+        exp: QlibFactorExperiment,
+        use_local: bool = True,
+        backtest_timeout: int | None = None,
+    ) -> QlibFactorExperiment:
         
         """
         Generate the experiment by processing and combining factor data,
@@ -171,7 +176,8 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         # execute() returns (result_df, execute_qlib_log) or (None, execute_qlib_log)
         result_tuple = exp.experiment_workspace.execute(
             qlib_config_name=config_name,
-            run_env={}
+            run_env={},
+            timeout=backtest_timeout,
         )
         
         # Unpack tuple; take first element (DataFrame)

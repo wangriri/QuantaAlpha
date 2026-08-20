@@ -1,4 +1,5 @@
 import pickle
+import os
 from pathlib import Path
 
 from quantaalpha.coder.costeer.config import CoSTEERSettings
@@ -15,6 +16,13 @@ from quantaalpha.core.evaluation import Evaluator
 from quantaalpha.core.evolving_agent import EvolvingStrategy
 from quantaalpha.core.experiment import Experiment
 from quantaalpha.log import logger
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 class CoSTEER(Developer[Experiment]):
@@ -40,9 +48,9 @@ class CoSTEER(Developer[Experiment]):
             Path(settings.new_knowledge_base_path) if settings.new_knowledge_base_path is not None else None
         )
 
-        self.with_knowledge = with_knowledge
+        self.with_knowledge = _env_bool("COSTEER_WITH_KNOWLEDGE", with_knowledge)
         self.with_feedback = with_feedback
-        self.knowledge_self_gen = knowledge_self_gen
+        self.knowledge_self_gen = _env_bool("COSTEER_KNOWLEDGE_SELF_GEN", knowledge_self_gen)
         self.filter_final_evo = filter_final_evo
         self.evolving_strategy = es
         self.evaluator = eva

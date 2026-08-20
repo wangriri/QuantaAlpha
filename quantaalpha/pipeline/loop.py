@@ -21,6 +21,7 @@ from quantaalpha.log.time import measure_time
 from quantaalpha.utils.workflow import LoopBase, LoopMeta
 from quantaalpha.core.exception import FactorEmptyError
 import threading
+from quantaalpha.tracing import TaskRecorder
 
 
 import datetime
@@ -64,9 +65,13 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
         direction_id: int = 0,
         round_idx: int = 0,
         quality_gate_config: dict = None,
+        backtest_timeout: int | None = None,
+        task_recorder: TaskRecorder | None = None,
     ):
         with logger.tag("init"):
             self.use_local = use_local
+            self.backtest_timeout = backtest_timeout
+            self.task_recorder = task_recorder
             # Store initial direction for factor provenance
             self.potential_direction = potential_direction
 
@@ -87,6 +92,8 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
             self._last_feedback = None
             
             logger.info(f"Initialized AlphaAgentLoop, backtest in {'local' if use_local else 'Docker'}")
+            if backtest_timeout is not None:
+                logger.info(f"Backtest timeout: {backtest_timeout} seconds")
             if potential_direction:
                 logger.info(f"Initial direction: {potential_direction}")
             if evolution_phase != "original":
@@ -129,6 +136,8 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
             global STOP_EVENT
             STOP_EVENT = stop_event
             super().__init__()
+            if self.task_recorder is not None:
+                self.task_recorder.write_alpha_loop_index(self, latest_step="init")
 
     @classmethod
     def load(cls, path, use_local: bool = True):
@@ -146,6 +155,12 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
             idea = self.hypothesis_generator.gen(self.trace)
             logger.log_object(idea, tag="hypothesis generation")
             self._last_hypothesis = idea
+            if self.task_recorder is not None:
+                self.task_recorder.write_hypothesis(
+                    idea,
+                    getattr(self.hypothesis_generator, "last_generation_trace", {}),
+                )
+                self.task_recorder.write_alpha_loop_index(self, latest_step="factor_propose")
         return idea
 
     @measure_time
@@ -155,6 +170,12 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
         with logger.tag("r"): 
             factor = self.factor_constructor.convert(prev_out["factor_propose"], self.trace)
             logger.log_object(factor.sub_tasks, tag="experiment generation")
+            if self.task_recorder is not None:
+                self.task_recorder.write_experiment(
+                    factor,
+                    getattr(self.factor_constructor, "last_conversion_trace", {}),
+                )
+                self.task_recorder.write_alpha_loop_index(self, latest_step="factor_construct")
         return factor
 
     @measure_time
@@ -164,6 +185,9 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
         with logger.tag("d"):  # develop
             factor = self.coder.develop(prev_out["factor_construct"])
             logger.log_object(factor.sub_workspace_list, tag="coder result")
+            if self.task_recorder is not None:
+                self.task_recorder.write_factor_values(factor)
+                self.task_recorder.write_alpha_loop_index(self, latest_step="factor_calculate")
         return factor
     
 
@@ -173,12 +197,19 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
         """Run backtest for factors."""
         with logger.tag("ef"):  # evaluate and feedback
             logger.info(f"Start factor backtest (Local: {self.use_local})")
-            exp = self.runner.develop(prev_out["factor_calculate"], use_local=self.use_local)
+            exp = self.runner.develop(
+                prev_out["factor_calculate"],
+                use_local=self.use_local,
+                backtest_timeout=self.backtest_timeout,
+            )
             if exp is None:
                 logger.error(f"Factor extraction failed.")
                 raise FactorEmptyError("Factor extraction failed.")
             logger.log_object(exp, tag="runner result")
             self._last_experiment = exp
+            if self.task_recorder is not None:
+                self.task_recorder.write_factor_evaluation(exp)
+                self.task_recorder.write_alpha_loop_index(self, latest_step="factor_backtest")
         return exp
 
     @measure_time
@@ -245,8 +276,18 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
                 parent_trajectory_ids=parent_trajectory_ids,
             )
             logger.info(f"Saved factors to library: {library_path} (phase={evolution_phase})")
+            if self.task_recorder is not None:
+                self.task_recorder.write_saved_factors(library_path=library_path, status="completed")
         except Exception as e:
             logger.warning(f"Failed to save factors to library: {e}")
+            if self.task_recorder is not None:
+                self.task_recorder.write_saved_factors(library_path=None, status=f"failed: {e}")
+        if self.task_recorder is not None:
+            self.task_recorder.write_feedback(
+                feedback,
+                getattr(self.summarizer, "last_feedback_trace", {}),
+            )
+            self.task_recorder.write_alpha_loop_index(self, latest_step="feedback")
     
     def _get_trajectory_data(self) -> dict[str, Any]:
         """

@@ -47,6 +47,7 @@ class MutationOperator:
         """
         self.prompt_path = prompt_path or DEFAULT_PROMPT_PATH
         self.prompts = self._load_prompts()
+        self.last_generation_trace: dict = {}
     
     def _load_prompts(self) -> dict[str, str]:
         """Load prompts from YAML file."""
@@ -145,18 +146,45 @@ class MutationOperator:
             else:
                 result = {"new_hypothesis": response.strip()}
             
+            self.last_generation_trace = {
+                "ok": True,
+                "raw": {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "response_text": response,
+                    "variables": {
+                        "parent_trajectory_id": parent.trajectory_id,
+                        "use_detailed_prompt": use_detailed_prompt,
+                    },
+                },
+                "parsed": {"ok": True, "data": result},
+                "parser": {"attempt_count": 1, "warnings": []},
+            }
             logger.info(f"Generated mutation from parent {parent.trajectory_id}")
             return result
             
         except Exception as e:
             logger.error(f"Mutation generation failed: {e}")
             # Return fallback
-            return {
+            result = {
                 "new_hypothesis": self._generate_fallback_hypothesis(parent),
                 "exploration_direction": "Fallback strategy: exploring opposite direction",
                 "orthogonality_reason": "Using fallback strategy due to generation failure",
                 "expected_characteristics": "May produce factors negatively correlated with parent"
             }
+            self.last_generation_trace = {
+                "ok": False,
+                "raw": {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "response_text": "",
+                    "variables": {"parent_trajectory_id": parent.trajectory_id},
+                },
+                "parsed": {"ok": True, "data": result},
+                "parser": {"attempt_count": 1, "warnings": ["fallback_used"]},
+                "error": str(e),
+            }
+            return result
     
     def _parse_detailed_response(self, response: str) -> dict[str, str]:
         """Parse JSON response from LLM."""

@@ -31,6 +31,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 DOTENV_PATH = PROJECT_ROOT / ".env"
+EXPERIMENT_CONFIG_PATH = PROJECT_ROOT / "configs" / "experiment.yaml"
+BACKTEST_CONFIG_PATH = PROJECT_ROOT / "configs" / "backtest.yaml"
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -54,13 +56,14 @@ app.add_middleware(
 class MiningStartRequest(BaseModel):
     """Request to start a factor mining experiment."""
     direction: str = Field(..., description="Research direction, e.g. '价量因子挖掘'")
-    numDirections: Optional[int] = Field(2, description="Parallel exploration directions")
-    maxRounds: Optional[int] = Field(3, description="Evolution rounds")
-    maxLoops: Optional[int] = Field(2, description="Iterations per direction")
-    factorsPerHypothesis: Optional[int] = Field(3, description="Factors per hypothesis")
+    numDirections: Optional[int] = Field(1, description="Parallel exploration directions")
+    maxRounds: Optional[int] = Field(1, description="Evolution rounds")
+    maxLoops: Optional[int] = Field(1, description="Iterations per direction")
+    factorsPerHypothesis: Optional[int] = Field(1, description="Factors per hypothesis")
     librarySuffix: Optional[str] = Field(None, description="Factor library file suffix")
     qualityGateEnabled: Optional[bool] = Field(None, description="Enable quality gate checks")
     parallelEnabled: Optional[bool] = Field(None, description="Enable parallel execution within evolution phases")
+    backtestTimeout: Optional[int] = Field(None, description="Backtest timeout in seconds")
 
 
 class BacktestStartRequest(BaseModel):
@@ -71,13 +74,23 @@ class BacktestStartRequest(BaseModel):
 
 
 class SystemConfigUpdate(BaseModel):
-    """Partial update to system configuration (.env)."""
+    """Partial update to system configuration (.env and YAML defaults)."""
     QLIB_DATA_DIR: Optional[str] = None
     DATA_RESULTS_DIR: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: Optional[str] = None
     CHAT_MODEL: Optional[str] = None
     REASONING_MODEL: Optional[str] = None
+    DEFAULT_LIBRARY_SUFFIX: Optional[str] = None
+
+    defaultNumDirections: Optional[int] = None
+    defaultMaxRounds: Optional[int] = None
+    defaultMaxLoops: Optional[int] = None
+    defaultFactorsPerHypothesis: Optional[int] = None
+    defaultMarket: Optional[str] = None
+    parallelExecution: Optional[bool] = None
+    qualityGateEnabled: Optional[bool] = None
+    backtestTimeout: Optional[int] = None
 
 
 class ApiResponse(BaseModel):
@@ -115,6 +128,128 @@ def _load_dotenv_dict() -> Dict[str, str]:
                 key, _, val = stripped.partition("=")
                 env[key.strip()] = val.strip()
     return env
+
+
+def _load_yaml_dict(path: Path) -> Dict[str, Any]:
+    """Load a YAML file as a mutable dict."""
+    if not path.exists():
+        return {}
+    try:
+        from ruamel.yaml import YAML
+
+        yaml_rt = YAML()
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml_rt.load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_yaml_dict(path: Path, data: Dict[str, Any]) -> None:
+    """Persist YAML defaults in a stable structured form."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from ruamel.yaml import YAML
+
+        yaml_rt = YAML()
+        yaml_rt.preserve_quotes = True
+        yaml_rt.indent(mapping=2, sequence=4, offset=2)
+        with path.open("w", encoding="utf-8") as f:
+            yaml_rt.dump(data, f)
+        return
+    except Exception:
+        pass
+
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _get_experiment_defaults(dotenv: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Read frontend-facing defaults from the canonical YAML/.env files."""
+    dotenv = dotenv or _load_dotenv_dict()
+    exp_cfg = _load_yaml_dict(EXPERIMENT_CONFIG_PATH)
+    backtest_cfg = _load_yaml_dict(BACKTEST_CONFIG_PATH)
+
+    planning = exp_cfg.get("planning") or {}
+    execution = exp_cfg.get("execution") or {}
+    evolution = exp_cfg.get("evolution") or {}
+    factor = exp_cfg.get("factor") or {}
+    qg = exp_cfg.get("quality_gate") or {}
+    exp_backtest = exp_cfg.get("backtest") or {}
+    bt_data = backtest_cfg.get("data") or {}
+
+    quality_enabled = bool(
+        qg.get("consistency_enabled")
+        or qg.get("complexity_enabled")
+        or qg.get("redundancy_enabled")
+    )
+
+    return {
+        "defaultNumDirections": int(planning.get("num_directions", 1) or 1),
+        "defaultMaxRounds": int(evolution.get("max_rounds", 1) or 1),
+        "defaultMaxLoops": int(execution.get("max_loops", 1) or 1),
+        "defaultFactorsPerHypothesis": int(factor.get("factors_per_hypothesis", 1) or 1),
+        "defaultMarket": bt_data.get("market", "csi300"),
+        "parallelExecution": bool(
+            evolution.get("parallel_enabled", execution.get("parallel_execution", False))
+        ),
+        "qualityGateEnabled": quality_enabled,
+        "backtestTimeout": int(exp_backtest.get("timeout", 600) or 600),
+        "defaultLibrarySuffix": dotenv.get("DEFAULT_LIBRARY_SUFFIX", ""),
+    }
+
+
+def _apply_experiment_default_updates(updates: Dict[str, Any]) -> None:
+    """Map frontend setting names onto experiment/backtest YAML defaults."""
+    exp_cfg = _load_yaml_dict(EXPERIMENT_CONFIG_PATH)
+    backtest_cfg = _load_yaml_dict(BACKTEST_CONFIG_PATH)
+    exp_changed = False
+    backtest_changed = False
+
+    if "defaultNumDirections" in updates:
+        exp_cfg.setdefault("planning", {})["num_directions"] = updates["defaultNumDirections"]
+        exp_changed = True
+    if "defaultMaxRounds" in updates:
+        exp_cfg.setdefault("evolution", {})["max_rounds"] = updates["defaultMaxRounds"]
+        exp_changed = True
+    if "defaultMaxLoops" in updates:
+        exp_cfg.setdefault("execution", {})["max_loops"] = updates["defaultMaxLoops"]
+        exp_changed = True
+    if "defaultFactorsPerHypothesis" in updates:
+        exp_cfg.setdefault("factor", {})["factors_per_hypothesis"] = updates["defaultFactorsPerHypothesis"]
+        exp_changed = True
+    if "parallelExecution" in updates:
+        enabled = bool(updates["parallelExecution"])
+        exp_cfg.setdefault("evolution", {})["parallel_enabled"] = enabled
+        exp_cfg.setdefault("execution", {})["parallel_execution"] = enabled
+        exp_changed = True
+    if "qualityGateEnabled" in updates:
+        enabled = bool(updates["qualityGateEnabled"])
+        qg = exp_cfg.setdefault("quality_gate", {})
+        if enabled:
+            qg["complexity_enabled"] = True
+            qg["redundancy_enabled"] = True
+            qg.setdefault("consistency_enabled", False)
+        else:
+            qg["consistency_enabled"] = False
+            qg["complexity_enabled"] = False
+            qg["redundancy_enabled"] = False
+        exp_changed = True
+    if "backtestTimeout" in updates:
+        exp_cfg.setdefault("backtest", {})["timeout"] = updates["backtestTimeout"]
+        exp_changed = True
+    if "defaultMarket" in updates:
+        backtest_cfg.setdefault("data", {})["market"] = updates["defaultMarket"]
+        backtest_changed = True
+
+    if exp_changed:
+        _write_yaml_dict(EXPERIMENT_CONFIG_PATH, exp_cfg)
+    if backtest_changed:
+        _write_yaml_dict(BACKTEST_CONFIG_PATH, backtest_cfg)
 
 
 def _find_factor_jsons() -> List[str]:
@@ -193,6 +328,10 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         # Load .env into env
         dotenv = _load_dotenv_dict()
         env.update(dotenv)
+        venv_bin = PROJECT_ROOT / ".venv" / "bin"
+        env.setdefault("VIRTUAL_ENV", str(PROJECT_ROOT / ".venv"))
+        env.setdefault("CONDA_DEFAULT_ENV", env.get("CONDA_ENV_NAME", "quantaalpha"))
+        env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
 
         # Use experiment_id as suffix to guarantee isolation
         experiment_id = f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -225,7 +364,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
                 cn_data_link.symlink_to(qlib_data)
 
         # Build a temporary config with frontend parameter overrides
-        base_config_path = PROJECT_ROOT / "configs" / "experiment.yaml"
+        base_config_path = EXPERIMENT_CONFIG_PATH
         config_path_to_use = str(base_config_path)
 
         try:
@@ -261,6 +400,9 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
                     qg["consistency_enabled"] = False
                     qg["complexity_enabled"] = False
                     qg["redundancy_enabled"] = False
+
+            if req.backtestTimeout is not None:
+                run_cfg.setdefault("backtest", {})["timeout"] = req.backtestTimeout
 
             # Write to a temporary file so the original is untouched
             tmp_dir = Path(env.get("WORKSPACE_PATH", "/tmp"))
@@ -474,7 +616,7 @@ async def start_mining(req: MiningStartRequest):
         "progress": {
             "phase": "parsing",
             "currentRound": 0,
-            "totalRounds": req.maxRounds or 3,
+            "totalRounds": req.maxRounds or 1,
             "progress": 0,
             "message": "正在初始化实验...",
             "timestamp": _now(),
@@ -1083,10 +1225,9 @@ async def get_system_config():
     dotenv = _load_dotenv_dict()
 
     # Read experiment.yaml for display
-    exp_yaml_path = PROJECT_ROOT / "configs" / "experiment.yaml"
     exp_yaml_content = ""
-    if exp_yaml_path.exists():
-        exp_yaml_content = exp_yaml_path.read_text(encoding="utf-8")
+    if EXPERIMENT_CONFIG_PATH.exists():
+        exp_yaml_content = EXPERIMENT_CONFIG_PATH.read_text(encoding="utf-8")
 
     # Mask API keys for security
     masked_env = {}
@@ -1100,6 +1241,7 @@ async def get_system_config():
         success=True,
         data={
             "env": masked_env,
+            "experimentConfig": _get_experiment_defaults(dotenv),
             "experimentYaml": exp_yaml_content,
             "factorLibraries": [Path(p).name for p in _find_factor_jsons()],
         },
@@ -1108,26 +1250,46 @@ async def get_system_config():
 
 @app.put("/api/v1/system/config", response_model=ApiResponse)
 async def update_system_config(update: SystemConfigUpdate):
-    """Update .env configuration (non-secret fields only)."""
+    """Update .env configuration and persisted YAML experiment defaults."""
     if not DOTENV_PATH.exists():
-        raise HTTPException(status_code=404, detail=".env file not found")
+        DOTENV_PATH.write_text("", encoding="utf-8")
 
-    content = DOTENV_PATH.read_text(encoding="utf-8")
     updates = {k: v for k, v in update.model_dump().items() if v is not None}
+    env_keys = {
+        "QLIB_DATA_DIR",
+        "DATA_RESULTS_DIR",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "CHAT_MODEL",
+        "REASONING_MODEL",
+        "DEFAULT_LIBRARY_SUFFIX",
+    }
+    env_updates = {k: v for k, v in updates.items() if k in env_keys}
+    yaml_updates = {k: v for k, v in updates.items() if k not in env_keys}
 
     import re
-    for key, val in updates.items():
-        # Replace existing line or append
-        pattern = rf"^{re.escape(key)}\s*=.*$"
-        replacement = f"{key}={val}"
-        new_content, n = re.subn(pattern, replacement, content, flags=re.MULTILINE)
-        if n > 0:
-            content = new_content
-        else:
-            content += f"\n{replacement}\n"
+    if env_updates:
+        content = DOTENV_PATH.read_text(encoding="utf-8")
+        for key, val in env_updates.items():
+            # Replace existing line or append
+            pattern = rf"^{re.escape(key)}\s*=.*$"
+            replacement = f"{key}={val}"
+            new_content, n = re.subn(pattern, replacement, content, flags=re.MULTILINE)
+            if n > 0:
+                content = new_content
+            else:
+                content += f"\n{replacement}\n"
+        DOTENV_PATH.write_text(content, encoding="utf-8")
 
-    DOTENV_PATH.write_text(content, encoding="utf-8")
-    return ApiResponse(success=True, message="配置已更新")
+    if yaml_updates:
+        _apply_experiment_default_updates(yaml_updates)
+
+    dotenv = _load_dotenv_dict()
+    return ApiResponse(
+        success=True,
+        message="配置已更新",
+        data={"experimentConfig": _get_experiment_defaults(dotenv)},
+    )
 
 
 # ---- WebSocket endpoint ----
