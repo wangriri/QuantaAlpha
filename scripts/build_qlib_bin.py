@@ -28,6 +28,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--csv-root", default="data/mongo_exports/qlib_csv")
     parser.add_argument("--out", default="data/qlib/cn_data")
     parser.add_argument("--market", default="csi300")
+    parser.add_argument(
+        "--exclude-prefixes",
+        nargs="*",
+        default=["bj"],
+        help="Instrument prefixes to exclude from the generated Qlib dataset. Use an empty value to disable.",
+    )
     return parser.parse_args()
 
 
@@ -57,6 +63,17 @@ def load_stock_data(h5_path: Path) -> pd.DataFrame:
         df.index = df.index.set_names(["datetime", "instrument"])
     df["$vwap"] = np.where(df["$volume"].abs() > 0, df["$amount"] * 10.0 / df["$volume"], np.nan)
     return df
+
+
+def drop_instruments_by_prefix(df: pd.DataFrame, prefixes: list[str]) -> tuple[pd.DataFrame, int]:
+    cleaned_prefixes = tuple(prefix.lower() for prefix in prefixes if prefix)
+    if df.empty or not cleaned_prefixes:
+        return df, 0
+
+    instruments = df.index.get_level_values("instrument").astype(str).str.lower()
+    mask = instruments.str.startswith(cleaned_prefixes)
+    removed_count = len(pd.Index(instruments[mask]).unique())
+    return df.loc[~mask].copy(), removed_count
 
 
 def load_index_data(csv_root: Path) -> pd.DataFrame:
@@ -92,6 +109,7 @@ def main() -> None:
     out = (root / args.out).resolve()
 
     stock_df = load_stock_data(h5_path)
+    stock_df, excluded_stock_count = drop_instruments_by_prefix(stock_df, args.exclude_prefixes)
     index_df = load_index_data(csv_root)
     all_df = pd.concat([stock_df, index_df]).sort_index()
 
@@ -128,6 +146,7 @@ def main() -> None:
 
     print(f"Qlib data built at {out}")
     print(f"calendar days: {len(dates):,}")
+    print(f"excluded instruments by prefix: {excluded_stock_count:,}")
     print(f"stock instruments in {args.market}: {len(stock_instruments):,}")
     print(f"all instruments including benchmarks: {len(all_instruments):,}")
 
