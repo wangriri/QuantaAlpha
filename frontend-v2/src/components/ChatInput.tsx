@@ -28,6 +28,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
   });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const persistPromptPack = (nextPromptPack: PromptPack) => {
+    try {
+      const saved = localStorage.getItem('quantaalpha_config');
+      const parsed = saved ? JSON.parse(saved) : {};
+      localStorage.setItem(
+        'quantaalpha_config',
+        JSON.stringify({
+          ...parsed,
+          promptPack: nextPromptPack,
+        }),
+      );
+    } catch {
+      localStorage.setItem('quantaalpha_config', JSON.stringify({ promptPack: nextPromptPack }));
+    }
+  };
+
   const examplePrompts = [
     '💹 挖掘动量类因子，关注短期反转和成交量配合',
     '💰 探索价值成长组合，考虑行业中性化',
@@ -48,7 +64,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
 
   const togglePromptPack = () => {
     if (isRunning) return;
-    setPromptPack((current) => (current === 'zh_quant_v1' ? 'en_default' : 'zh_quant_v1'));
+    setPromptPack((current) => {
+      const next = current === 'zh_quant_v1' ? 'en_default' : 'zh_quant_v1';
+      persistPromptPack(next);
+      return next;
+    });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
