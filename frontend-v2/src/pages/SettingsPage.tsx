@@ -59,6 +59,43 @@ const parseNumberField = (value: string, fallback: number) => {
 
 type SettingsTab = 'api' | 'data' | 'params' | 'directions';
 
+const MODEL_OPTIONS = [
+  {
+    label: 'DeepSeek',
+    options: [
+      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+      { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+      { value: 'deepseek-chat', label: 'DeepSeek Chat / V3 兼容' },
+      { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner / R1 兼容' },
+    ],
+  },
+  {
+    label: 'Qwen',
+    options: [
+      { value: 'qwen-max', label: 'Qwen Max' },
+      { value: 'qwen-plus', label: 'Qwen Plus' },
+      { value: 'qwen-turbo', label: 'Qwen Turbo' },
+    ],
+  },
+  {
+    label: 'OpenAI',
+    options: [
+      { value: 'gpt-4o', label: 'GPT-4o' },
+      { value: 'gpt-4o-mini', label: 'GPT-4o mini' },
+      { value: 'gpt-4.1', label: 'GPT-4.1' },
+      { value: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
+      { value: 'gpt-4', label: 'GPT-4' },
+      { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
+    ],
+  },
+];
+
+const MODEL_OPTION_VALUES = new Set(
+  MODEL_OPTIONS.flatMap((group) => group.options.map((option) => option.value))
+);
+const CUSTOM_MODEL_VALUE = '__custom_model__';
+
 export const SettingsPage: React.FC = () => {
   const [config, setConfig] = useState<SystemConfig>(DEFAULT_CONFIG);
   const [activeTab, setActiveTab] = useState<SettingsTab>('api');
@@ -205,6 +242,8 @@ export const SettingsPage: React.FC = () => {
     setIsDirty(true);
   };
 
+  const isCustomModel = !MODEL_OPTION_VALUES.has(config.modelName);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[40vh]">
@@ -340,18 +379,39 @@ export const SettingsPage: React.FC = () => {
               <div>
                 <label className="block text-sm font-medium mb-2">模型名称</label>
                 <select
-                  value={config.modelName}
-                  onChange={(e) => updateConfigField('modelName', e.target.value)}
+                  value={isCustomModel ? CUSTOM_MODEL_VALUE : config.modelName}
+                  onChange={(e) => {
+                    if (e.target.value === CUSTOM_MODEL_VALUE) {
+                      updateConfigField('modelName', '');
+                      return;
+                    }
+                    updateConfigField('modelName', e.target.value);
+                  }}
                   className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                 >
-                  <option value="deepseek-chat">DeepSeek V3</option>
-                  <option value="deepseek-reasoner">DeepSeek R1</option>
-                  <option value="qwen-max">Qwen Max</option>
-                  <option value="qwen-plus">Qwen Plus</option>
-                  <option value="gpt-4">GPT-4</option>
-                  <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                  <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                  {MODEL_OPTIONS.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.options.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                  <option value={CUSTOM_MODEL_VALUE}>自定义模型 ID</option>
                 </select>
+                {isCustomModel && (
+                  <input
+                    type="text"
+                    value={config.modelName}
+                    onChange={(e) => updateConfigField('modelName', e.target.value.trim())}
+                    placeholder="输入模型 ID，例如 deepseek-v4-flash"
+                    className="mt-3 w-full rounded-lg border border-input bg-background px-4 py-2 text-sm font-mono focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                  />
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  DeepSeek 官方模型可选 V4 Flash、V4 Pro，也保留 Chat / Reasoner 兼容名。
+                </p>
               </div>
 
               <div>
