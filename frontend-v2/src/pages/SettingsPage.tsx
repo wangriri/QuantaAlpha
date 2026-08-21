@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { Settings, Save, RotateCcw, Eye, EyeOff, Check, X, AlertCircle, Loader2, Database, Sliders, Box, Cpu, Compass, Shuffle } from 'lucide-react';
+import { Settings, Save, RotateCcw, Eye, EyeOff, Check, X, AlertCircle, Loader2, Database, Sliders, Box, Cpu, Compass, Shuffle, Bot } from 'lucide-react';
 import { getSystemConfig, updateSystemConfig, healthCheck } from '@/services/api';
 import { REFERENCE_MINING_DIRECTIONS, getDirectionLabel, type MiningDirectionItem } from '@/utils/miningDirections';
+import type { PromptPack } from '@/types';
 
 interface SystemConfig {
   // LLM
@@ -25,6 +26,7 @@ interface SystemConfig {
   qualityGateEnabled: boolean;
   backtestTimeout: number;
   defaultLibrarySuffix: string;
+  promptPack: PromptPack;
   // Mining direction: use selected directions / random
   miningDirectionMode: 'selected' | 'random';
   selectedMiningDirectionIndices: number[];
@@ -45,6 +47,7 @@ const DEFAULT_CONFIG: SystemConfig = {
   qualityGateEnabled: false,
   backtestTimeout: 600,
   defaultLibrarySuffix: '',
+  promptPack: 'zh_quant_v1',
   miningDirectionMode: 'selected',
   selectedMiningDirectionIndices: [0],
 };
@@ -116,6 +119,7 @@ export const SettingsPage: React.FC = () => {
           qualityGateEnabled: experimentConfig.qualityGateEnabled ?? DEFAULT_CONFIG.qualityGateEnabled,
           backtestTimeout: experimentConfig.backtestTimeout ?? DEFAULT_CONFIG.backtestTimeout,
           defaultLibrarySuffix: experimentConfig.defaultLibrarySuffix ?? DEFAULT_CONFIG.defaultLibrarySuffix,
+          promptPack: experimentConfig.promptPack ?? DEFAULT_CONFIG.promptPack,
           miningDirectionMode,
           selectedMiningDirectionIndices,
         });
@@ -174,6 +178,7 @@ export const SettingsPage: React.FC = () => {
       update.parallelExecution = config.parallelExecution;
       update.qualityGateEnabled = config.qualityGateEnabled;
       update.backtestTimeout = config.backtestTimeout;
+      update.promptPack = config.promptPack;
 
       if (Object.keys(update).length > 0) {
         await updateSystemConfig(update);
@@ -347,6 +352,42 @@ export const SettingsPage: React.FC = () => {
                   <option value="gpt-4-turbo">GPT-4 Turbo</option>
                   <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-3">提示词模式</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => updateConfigField('promptPack', 'zh_quant_v1')}
+                    className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all ${
+                      config.promptPack === 'zh_quant_v1'
+                        ? 'border-primary bg-primary/10 text-primary shadow-sm'
+                        : 'border-border/60 bg-background/60 text-muted-foreground hover:bg-secondary/30 hover:text-foreground'
+                    }`}
+                  >
+                    <Bot className="h-5 w-5 flex-shrink-0" />
+                    <div>
+                      <div className="font-medium">中文优化版</div>
+                      <div className="text-xs opacity-80">zh_quant_v1</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateConfigField('promptPack', 'en_default')}
+                    className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all ${
+                      config.promptPack === 'en_default'
+                        ? 'border-primary bg-primary/10 text-primary shadow-sm'
+                        : 'border-border/60 bg-background/60 text-muted-foreground hover:bg-secondary/30 hover:text-foreground'
+                    }`}
+                  >
+                    <Bot className="h-5 w-5 flex-shrink-0" />
+                    <div>
+                      <div className="font-medium">英文原版</div>
+                      <div className="text-xs opacity-80">en_default</div>
+                    </div>
+                  </button>
+                </div>
               </div>
 
               {/* Connection Status */}

@@ -252,6 +252,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           qualityGateEnabled: config.qualityGateEnabled ?? defaults.qualityGateEnabled ?? false,
           parallelEnabled: config.parallelExecution ?? defaults.parallelExecution ?? false,
           backtestTimeout: config.backtestTimeout || defaults.backtestTimeout || undefined,
+          promptPack: config.promptPack || defaults.promptPack || 'zh_quant_v1',
         });
         if (!resp.success || !resp.data) throw new Error(resp.error || 'Failed');
 

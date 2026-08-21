@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Square, Compass } from 'lucide-react';
-import { TaskConfig } from '@/types';
+import { Send, Sparkles, Square, Compass, Bot } from 'lucide-react';
+import { TaskConfig, type PromptPack } from '@/types';
 
 interface ChatInputProps {
   onSubmit: (config: TaskConfig) => void;
@@ -11,6 +11,18 @@ interface ChatInputProps {
 export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunning = false }) => {
   const [input, setInput] = useState('');
   const [useCustomMiningDirection, setUseCustomMiningDirection] = useState(false);
+  const [promptPack, setPromptPack] = useState<PromptPack>(() => {
+    const saved = localStorage.getItem('quantaalpha_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.promptPack === 'en_default' || parsed.promptPack === 'zh_quant_v1') {
+          return parsed.promptPack;
+        }
+      } catch {}
+    }
+    return 'zh_quant_v1';
+  });
   const [config] = useState<Partial<TaskConfig>>({
     librarySuffix: '',
   });
@@ -28,9 +40,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
     onSubmit({
       userInput: input.trim(),
       useCustomMiningDirection,
+      promptPack,
       ...config,
       librarySuffix: suffix,
     } as TaskConfig);
+  };
+
+  const togglePromptPack = () => {
+    if (isRunning) return;
+    setPromptPack((current) => (current === 'zh_quant_v1' ? 'en_default' : 'zh_quant_v1'));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -76,6 +94,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
                 <button
                   type="button"
                   onClick={() => setUseCustomMiningDirection((v) => !v)}
+                  disabled={isRunning}
                   title={useCustomMiningDirection ? '使用设置中的挖掘方向（已开）' : '使用设置中的挖掘方向（点击开启）'}
                   className={`p-2 rounded-lg transition-all ${
                     useCustomMiningDirection
@@ -91,6 +110,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
                   }`}
                 >
                   自选挖掘方向
+                </span>
+                <button
+                  type="button"
+                  onClick={togglePromptPack}
+                  disabled={isRunning}
+                  title={
+                    promptPack === 'zh_quant_v1'
+                      ? '当前使用中文优化版提示词（点击切换英文原版）'
+                      : '当前使用英文原版提示词（点击切换中文优化版）'
+                  }
+                  className={`ml-3 p-2 rounded-lg transition-all ${
+                    promptPack === 'zh_quant_v1'
+                      ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
+                      : 'bg-amber-500/15 text-amber-600 ring-1 ring-amber-500/30'
+                  } ${isRunning ? 'opacity-60 cursor-not-allowed' : 'hover:scale-105'}`}
+                >
+                  <Bot className="h-4 w-4" />
+                </button>
+                <span
+                  className={`text-xs ml-1 font-medium ${
+                    promptPack === 'zh_quant_v1' ? 'text-primary' : 'text-amber-600'
+                  }`}
+                >
+                  {promptPack === 'zh_quant_v1' ? '中文优化版' : '英文原版'}
                 </span>
               </div>
               <div className="flex items-end gap-3">

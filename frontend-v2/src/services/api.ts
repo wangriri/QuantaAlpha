@@ -8,6 +8,7 @@
 import type {
   ApiResponse,
   Factor,
+  PromptPack,
   Task,
   WsMessage,
 } from '@/types';
@@ -43,6 +44,7 @@ export interface MiningStartParams {
   qualityGateEnabled?: boolean;
   parallelEnabled?: boolean;
   backtestTimeout?: number;
+  promptPack?: PromptPack;
 }
 
 export async function startMining(params: MiningStartParams) {
@@ -171,6 +173,7 @@ export interface ExperimentDefaults {
   qualityGateEnabled: boolean;
   backtestTimeout: number;
   defaultLibrarySuffix: string;
+  promptPack: PromptPack;
 }
 
 export interface SystemConfigResponse {

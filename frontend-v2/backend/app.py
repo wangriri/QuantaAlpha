@@ -33,6 +33,10 @@ if str(PROJECT_ROOT) not in sys.path:
 DOTENV_PATH = PROJECT_ROOT / ".env"
 EXPERIMENT_CONFIG_PATH = PROJECT_ROOT / "configs" / "experiment.yaml"
 BACKTEST_CONFIG_PATH = PROJECT_ROOT / "configs" / "backtest.yaml"
+PROMPT_PACK_DEFAULTS = {
+    "zh_quant_v1": {"output_language": "zh-CN", "strict_json": True},
+    "en_default": {"output_language": "en", "strict_json": False},
+}
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -64,6 +68,7 @@ class MiningStartRequest(BaseModel):
     qualityGateEnabled: Optional[bool] = Field(None, description="Enable quality gate checks")
     parallelEnabled: Optional[bool] = Field(None, description="Enable parallel execution within evolution phases")
     backtestTimeout: Optional[int] = Field(None, description="Backtest timeout in seconds")
+    promptPack: Optional[str] = Field(None, description="Prompt pack: zh_quant_v1 | en_default")
 
 
 class BacktestStartRequest(BaseModel):
@@ -91,6 +96,7 @@ class SystemConfigUpdate(BaseModel):
     parallelExecution: Optional[bool] = None
     qualityGateEnabled: Optional[bool] = None
     backtestTimeout: Optional[int] = None
+    promptPack: Optional[str] = None
 
 
 class ApiResponse(BaseModel):
@@ -180,6 +186,7 @@ def _get_experiment_defaults(dotenv: Optional[Dict[str, str]] = None) -> Dict[st
     factor = exp_cfg.get("factor") or {}
     qg = exp_cfg.get("quality_gate") or {}
     exp_backtest = exp_cfg.get("backtest") or {}
+    prompting = exp_cfg.get("prompting") or {}
     bt_data = backtest_cfg.get("data") or {}
 
     quality_enabled = bool(
@@ -200,6 +207,7 @@ def _get_experiment_defaults(dotenv: Optional[Dict[str, str]] = None) -> Dict[st
         "qualityGateEnabled": quality_enabled,
         "backtestTimeout": int(exp_backtest.get("timeout", 600) or 600),
         "defaultLibrarySuffix": dotenv.get("DEFAULT_LIBRARY_SUFFIX", ""),
+        "promptPack": prompting.get("pack", "zh_quant_v1"),
     }
 
 
@@ -241,6 +249,14 @@ def _apply_experiment_default_updates(updates: Dict[str, Any]) -> None:
         exp_changed = True
     if "backtestTimeout" in updates:
         exp_cfg.setdefault("backtest", {})["timeout"] = updates["backtestTimeout"]
+        exp_changed = True
+    if "promptPack" in updates:
+        prompt_pack = str(updates["promptPack"] or "zh_quant_v1")
+        if prompt_pack not in PROMPT_PACK_DEFAULTS:
+            raise HTTPException(status_code=400, detail=f"Unsupported prompt pack: {prompt_pack}")
+        prompt_cfg = exp_cfg.setdefault("prompting", {})
+        prompt_cfg["pack"] = prompt_pack
+        prompt_cfg.update(PROMPT_PACK_DEFAULTS[prompt_pack])
         exp_changed = True
     if "defaultMarket" in updates:
         backtest_cfg.setdefault("data", {})["market"] = updates["defaultMarket"]
@@ -336,6 +352,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         # Use experiment_id as suffix to guarantee isolation
         experiment_id = f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         env["EXPERIMENT_ID"] = experiment_id
+        selected_prompt_pack = req.promptPack
         
         # Enforce unique library suffix if not provided
         if not req.librarySuffix:
@@ -370,6 +387,9 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         try:
             with open(base_config_path, "r", encoding="utf-8") as _f:
                 run_cfg = yaml.safe_load(_f) or {}
+            selected_prompt_pack = selected_prompt_pack or (
+                (run_cfg.get("prompting") or {}).get("pack")
+            )
 
             # Apply frontend overrides
             if req.numDirections is not None:
@@ -403,6 +423,12 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
 
             if req.backtestTimeout is not None:
                 run_cfg.setdefault("backtest", {})["timeout"] = req.backtestTimeout
+            if req.promptPack:
+                if req.promptPack not in PROMPT_PACK_DEFAULTS:
+                    raise ValueError(f"Unsupported prompt pack: {req.promptPack}")
+                prompt_cfg = run_cfg.setdefault("prompting", {})
+                prompt_cfg["pack"] = req.promptPack
+                prompt_cfg.update(PROMPT_PACK_DEFAULTS[req.promptPack])
 
             # Write to a temporary file so the original is untouched
             tmp_dir = Path(env.get("WORKSPACE_PATH", "/tmp"))
@@ -417,6 +443,9 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             traceback.print_exc()
 
         # Build CLI args
+        if selected_prompt_pack in PROMPT_PACK_DEFAULTS:
+            env["QUANTAALPHA_PROMPT_PACK"] = selected_prompt_pack
+
         cmd = [
             sys.executable, "-m", "quantaalpha.cli", "mine",
             "--direction", req.direction,

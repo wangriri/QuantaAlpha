@@ -1,5 +1,6 @@
 // Task status
 export type TaskStatus = 'idle' | 'running' | 'completed' | 'failed';
+export type PromptPack = 'zh_quant_v1' | 'en_default';
 
 // Execution phase
 export type ExecutionPhase =
@@ -39,6 +40,7 @@ export interface TaskConfig {
   parallelExecution?: boolean;
   qualityGateEnabled?: boolean;
   backtestTimeout?: number;
+  promptPack?: PromptPack;
 }
 
 // Real-time metrics
