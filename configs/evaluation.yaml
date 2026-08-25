@@ -1,0 +1,65 @@
+engine:
+  name: oto_single_factor_v1
+  output_dir: data/results/factor_evaluations
+  market_cache_dir: data/results/evaluation_cache
+
+universe:
+  exchanges: [SH, SZ]
+  exclude_st: true
+  exclude_open_limit: true
+
+periods:
+  training: ["2023-01-01", "2025-06-30"]
+  validation: ["2025-07-01", "2025-12-31"]
+  prohibit_cross_period_returns: true
+  oos_status: sealed
+
+alignment:
+  factor_lag_trading_days: 1
+  label: oto_open_to_open
+
+lookahead_audit:
+  enabled: true
+  static_check: true
+  truncation_check: true
+  cutoff_quantiles: [0.25, 0.50, 0.75]
+  rtol: 1.0e-8
+  atol: 1.0e-10
+
+metrics:
+  annualization: 252
+  ic_threshold: 0.03
+  icir_threshold: 0.5
+  half_life_max_lag: 20
+  half_life_consecutive: 3
+  group_count: 10
+  qcut_noise_std: 1.0e-8
+  qcut_random_seed:
+  spread_threshold: 0.30
+  excess_sharpe_threshold: 1.0
+
+costs:
+  schedule:
+    - end_date: "2023-12-31"
+      rate: 0.0007
+    - end_date: "9999-12-31"
+      rate: 0.00035
+  charge_benchmark: true
+
+validation:
+  run_for_training_pass_only: true
+  hard_gate: false
+  feed_to_ai: true
+
+coverage:
+  gate_enabled: false
+  warning_day_ratio: 0.90
+  warning_min_stocks: 1000
+
+deduplication:
+  scope: planning_direction
+  threshold: 0.70
+  methods: [pearson, spearman]
+  manual_confirmation: true
+  archive_instead_of_delete: true
+

@@ -44,7 +44,7 @@ execution:
   # Steps per loop: fixed at 5 (propose/construct/calculate/backtest/feedback)
   steps_per_loop: 5
   # Total steps (highest priority); overrides max_loops * steps_per_loop when set
-  step_n: null
+  step_n:
   # Use local environment for backtest: true=local, false=Docker
   use_local: true
   # Run branches in parallel using multiprocessing
@@ -149,7 +149,7 @@ factor:
   duplication:
     enabled: true
     threshold: 5
-    factor_zoo_path: null  # Use default when null
+    factor_zoo_path:       # Use default when null
 
 
 # ============================================================
@@ -159,8 +159,8 @@ factor:
 backtest:
   use_docker: false
   timeout: 800
-  qlib:
-    config_name: conf_baseline.yaml
+  evaluation:
+    config_path: configs/evaluation.yaml
 
 
 # ============================================================

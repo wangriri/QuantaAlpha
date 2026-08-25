@@ -53,7 +53,7 @@ class AlphaAgentFactorBasePropSetting(BasePropSetting):
     hypothesis_gen: str = "quantaalpha.factors.proposal.AlphaAgentHypothesisGen"
     hypothesis2experiment: str = "quantaalpha.factors.proposal.AlphaAgentHypothesis2FactorExpression"
     coder: str = "quantaalpha.factors.qlib_coder.QlibFactorParser"
-    runner: str = "quantaalpha.factors.runner.QlibFactorRunner"
+    runner: str = "quantaalpha.evaluation.runner.OTOSingleFactorRunner"
     summarizer: str = "quantaalpha.factors.feedback.AlphaAgentQlibFactorHypothesisExperiment2Feedback"
     evolving_n: int = 5
 
@@ -66,7 +66,7 @@ class FactorBasePropSetting(BasePropSetting):
     hypothesis_gen: str = "quantaalpha.factors.proposal.QlibFactorHypothesisGen"
     hypothesis2experiment: str = "quantaalpha.factors.proposal.QlibFactorHypothesis2Experiment"
     coder: str = "quantaalpha.factors.qlib_coder.QlibFactorCoSTEER"
-    runner: str = "quantaalpha.factors.runner.QlibFactorRunner"
+    runner: str = "quantaalpha.evaluation.runner.OTOSingleFactorRunner"
     summarizer: str = "quantaalpha.factors.feedback.QlibFactorHypothesisExperiment2Feedback"
     evolving_n: int = 10
 
@@ -79,7 +79,7 @@ class FactorBackTestBasePropSetting(BasePropSetting):
     hypothesis_gen: str = "quantaalpha.factors.proposal.EmptyHypothesisGen"
     hypothesis2experiment: str = "quantaalpha.factors.proposal.BacktestHypothesis2FactorExpression"
     coder: str = "quantaalpha.factors.qlib_coder.QlibFactorCoder"
-    runner: str = "quantaalpha.factors.runner.QlibFactorRunner"
+    runner: str = "quantaalpha.evaluation.runner.OTOSingleFactorRunner"
     summarizer: str = "quantaalpha.factors.feedback.QlibFactorHypothesisExperiment2Feedback"
     evolving_n: int = 1
 

@@ -678,9 +678,13 @@ class TaskRecorder:
         factor_dir_name = "05_factors" if self.phase == "original" else "07_factors"
         result = getattr(experiment, "result", None)
         result_data = to_jsonable(result)
+        is_oto = isinstance(result, dict) and result.get("evaluation_engine") == "oto_single_factor_v1"
+        per_factor_results = list((result.get("factors") or {}).values()) if is_oto else []
         for idx, factor_id in enumerate(self._factor_ids or []):
             rel = Path(factor_dir_name) / f"factor_{idx:03d}" / "03_factor_evaluation.json"
             eval_id = f"{factor_id}.eval_000"
+            factor_result = per_factor_results[idx] if idx < len(per_factor_results) else result_data
+            factor_status = factor_result.get("status") if isinstance(factor_result, dict) else None
             self.write_json(
                 rel,
                 {
@@ -689,17 +693,19 @@ class TaskRecorder:
                     "task_id": self.task_id,
                     "evaluation_id": eval_id,
                     "factor_id": factor_id,
-                    "evaluation_engine": "qlib_current",
-                    "status": "success" if result is not None else "failed",
+                    "evaluation_engine": "oto_single_factor_v1" if is_oto else "qlib_legacy",
+                    "status": factor_status or ("success" if result is not None else "failed"),
                     "raw": {
                         "experiment_workspace": str(getattr(getattr(experiment, "experiment_workspace", None), "workspace_path", "")),
-                        "result": result_data,
+                        "result": factor_result,
                     },
                     "parsed": {
-                        "ok": result is not None,
-                        "metrics": result_data,
+                        "ok": factor_status in {"passed", "failed"} if is_oto else result is not None,
+                        "metrics": factor_result,
                     },
-                    "final_decision": "candidate" if result is not None else "failed",
+                    "final_decision": (
+                        "candidate" if factor_status == "passed" else "failed"
+                    ) if is_oto else ("candidate" if result is not None else "failed"),
                 },
             )
             self.run.add_node(eval_id, "evaluation", "因子评价结果", self.rel(rel), phase=self.phase, round_idx=self.round_idx)
@@ -711,6 +717,7 @@ class TaskRecorder:
                 "run_id": self.run.run_id,
                 "task_id": self.task_id,
                 "factor_ids": self._factor_ids,
+                "evaluation_engine": "oto_single_factor_v1" if is_oto else "qlib_legacy",
                 "raw": {"result": result_data},
                 "parsed": {"ok": result is not None, "metrics": result_data},
                 "status": "completed" if result is not None else "failed",

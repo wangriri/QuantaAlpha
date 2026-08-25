@@ -88,11 +88,17 @@ class StrategyTrajectory:
         return hashlib.md5(content.encode()).hexdigest()[:12]
     
     def get_primary_metric(self) -> Optional[float]:
-        """Get the primary metric (RankIC) for comparison."""
-        return self.backtest_metrics.get("RankIC")
+        """Rank passing factors first, then use training excess Sharpe."""
+        sharpe = self.backtest_metrics.get("excess_sharpe")
+        if sharpe is None:
+            return self.backtest_metrics.get("RankIC")
+        passed = bool(self.backtest_metrics.get("training_pass"))
+        return float(sharpe) + (1_000_000.0 if passed else -1_000_000.0)
     
     def is_successful(self) -> bool:
         """Check if this trajectory produced valid results."""
+        if "training_pass" in self.backtest_metrics:
+            return bool(self.backtest_metrics.get("training_pass"))
         rank_ic = self.get_primary_metric()
         return rank_ic is not None and rank_ic > 0
     
@@ -406,4 +412,3 @@ class TrajectoryPool:
                 logger.info(f"Deleted trajectory pool file: {self.save_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete trajectory pool file: {e}")
-

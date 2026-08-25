@@ -24,6 +24,26 @@ DIRNAME = Path(__file__).absolute().resolve().parent
 
 
 def process_results(current_result, sota_result):
+    if isinstance(current_result, dict) and current_result.get("evaluation_engine") == "oto_single_factor_v1":
+        compact = {
+            "evaluation_engine": current_result.get("evaluation_engine"),
+            "summary": current_result.get("summary", {}),
+            "factors": {},
+        }
+        for name, result in (current_result.get("factors") or {}).items():
+            compact["factors"][name] = {
+                "status": result.get("status"),
+                "direction_multiplier": result.get("direction_multiplier"),
+                "training": result.get("training", {}),
+                "subperiods": result.get("subperiods", {}),
+                "validation": result.get("validation", {}),
+                "gate_results": result.get("gate_results", {}),
+                "lookahead_audit": result.get("lookahead_audit", {}),
+                "warnings": result.get("warnings", []),
+                "oos_status": "sealed",
+            }
+        return json.dumps(compact, ensure_ascii=False, indent=2, default=str)
+
     # Convert the results to dataframes
     current_df = pd.DataFrame(current_result)
     
@@ -199,7 +219,13 @@ class QlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Feedback):
         hypothesis_evaluation = response_json.get("Feedback for Hypothesis", "No feedback provided")
         new_hypothesis = response_json.get("New Hypothesis", "No new hypothesis provided")
         reason = response_json.get("Reasoning", "No reasoning provided")
-        decision = convert2bool(response_json.get("Replace Best Result", "no"))
+        if isinstance(current_result, dict) and current_result.get("evaluation_engine") == "oto_single_factor_v1":
+            decision = any(
+                item.get("status") == "passed"
+                for item in (current_result.get("factors") or {}).values()
+            )
+        else:
+            decision = convert2bool(response_json.get("Replace Best Result", "no"))
 
         return HypothesisFeedback(
             observations=observations,
@@ -344,7 +370,13 @@ class AlphaAgentQlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Fee
         hypothesis_evaluation = response_json.get("Feedback for Hypothesis", "No feedback provided")
         new_hypothesis = response_json.get("New Hypothesis", "No new hypothesis provided")
         reason = response_json.get("Reasoning", "No reasoning provided")
-        decision = convert2bool(response_json.get("Replace Best Result", "no"))
+        if isinstance(current_result, dict) and current_result.get("evaluation_engine") == "oto_single_factor_v1":
+            decision = any(
+                item.get("status") == "passed"
+                for item in (current_result.get("factors") or {}).values()
+            )
+        else:
+            decision = convert2bool(response_json.get("Replace Best Result", "no"))
 
         feedback = HypothesisFeedback(
             observations=observations,

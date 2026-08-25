@@ -148,13 +148,13 @@ REASONING_MODEL=deepseek-v3
 
 ### 3. 准备数据
 
-QuantaAlpha 需要两类数据：**Qlib 行情数据**（用于回测）和**预计算的价量 HDF5 文件**（用于因子挖掘）。我们已将所有数据上传至 HuggingFace，方便下载使用。
+QuantaAlpha 的因子生成仍可使用现有 Qlib 行情目录和预计算价量 HDF5；`evaluation_v2` 的 OTO 评估行情则从公司 Mongo 数据源读取。
 
 > **数据集地址**：[https://huggingface.co/datasets/QuantaAlpha/qlib_csi300](https://huggingface.co/datasets/QuantaAlpha/qlib_csi300)
 
 | 文件 | 说明 | 用途 |
 | :--- | :--- | :--- |
-| `cn_data.zip` | Qlib 原始行情数据（A 股，2016–2025） | Qlib 初始化 & 回测必需 |
+| `cn_data.zip` | Qlib 原始行情数据（A 股，2016–2025） | 兼容现有因子生成与旧实验 |
 | `daily_pv.h5` | 预计算的完整价量数据 | 因子挖掘必需 |
 | `daily_pv_debug.h5` | 预计算的调试子集（数据量较小） | 因子挖掘（调试/验证）必需 |
 
@@ -223,32 +223,25 @@ FACTOR_CoSTEER_DATA_FOLDER_DEBUG=/your/custom/path/factor_source_data_debug
 
 实验会自动挖掘、进化和验证 Alpha 因子，并将所有发现的因子保存到 `all_factors_library*.json`。
 
-### 5. 独立回测
+### 5. 单因子 OTO 评估
 
-挖掘完成后，从因子库中组合因子进行全周期回测：
+挖掘完成后，逐个评估因子，不训练 LightGBM，也不合并多个因子：
 
 ```bash
-# 仅使用自定义因子回测
-python -m quantaalpha.backtest.run_backtest \
-  -c configs/backtest.yaml \
-  --factor-source custom \
-  --factor-json all_factors_library.json
+# 只评估尚未写入 evaluation_v2 的因子
+python -m quantaalpha.evaluation.cli evaluate-library \
+  --library data/factorlib/all_factors_library.json \
+  --mode unevaluated \
+  --config configs/evaluation.yaml
 
-# 结合 Alpha158(20) 基线因子
-python -m quantaalpha.backtest.run_backtest \
-  -c configs/backtest.yaml \
-  --factor-source combined \
-  --factor-json all_factors_library.json
-
-# 仅加载因子，不执行回测（检查因子加载是否正常）
-python -m quantaalpha.backtest.run_backtest \
-  -c configs/backtest.yaml \
-  --factor-source custom \
-  --factor-json all_factors_library.json \
-  --dry-run -v
+# 重新评估全部因子
+python -m quantaalpha.evaluation.cli evaluate-library \
+  --library data/factorlib/all_factors_library.json \
+  --mode all \
+  --config configs/evaluation.yaml
 ```
 
-结果保存在 `configs/backtest.yaml` 中 `experiment.output_dir` 指定的目录。
+结果写入因子库的 `evaluation_v2`，详细 CSV/JSON 产物保存在 `data/results/factor_evaluations/`。时间对齐和评估规则见 [OTO 单因子评估 ADR](docs/ADR-OTO单因子评估.md)。
 
 > 📘 需要帮助？请查阅完整的 **[用户指南](docs/user_guide.md)**，了解高级配置、实验复现和详细使用示例。
 
@@ -261,7 +254,7 @@ QuantaAlpha 提供基于 Web 的可视化界面，你可以在界面中完成全
 
 ```bash
 conda activate quantaalpha
-cd frontend-v2
+cd git_ignore_folder/frontend-v2
 bash start.sh
 # 访问 http://localhost:3000
 ```
@@ -269,7 +262,7 @@ bash start.sh
 - **⚙️ 系统设置**：在界面中直接配置 LLM API、数据路径和实验参数
 - **⛏️ 因子挖掘**：通过自然语言输入启动实验，实时监控进度
 - **📚 因子库**：浏览、搜索和筛选所有已挖掘因子，支持质量分级
-- **📈 独立回测**：选择因子库，运行全周期回测并查看可视化结果
+- **📈 因子评估**：批量运行单因子 OTO 评估，查看门槛、验证、曲线和重复因子报告
 
 ---
 

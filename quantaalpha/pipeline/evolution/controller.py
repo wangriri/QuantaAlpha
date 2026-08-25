@@ -812,6 +812,24 @@ class EvolutionController:
         
         if result is None:
             return metrics
+
+        if isinstance(result, dict) and result.get("evaluation_engine") == "oto_single_factor_v1":
+            factors = result.get("factors") or {}
+            primary_name = (result.get("summary") or {}).get("primary_factor")
+            primary = factors.get(primary_name, {}) if primary_name else {}
+            training = primary.get("training") or {}
+            validation = primary.get("validation") or {}
+            return {
+                "training_pass": 1.0 if primary.get("status") == "passed" else 0.0,
+                "excess_sharpe": training.get("excess_sharpe"),
+                "IC": training.get("ic"),
+                "ICIR": training.get("icir"),
+                "RankIC": training.get("rank_ic"),
+                "RankICIR": training.get("rank_icir"),
+                "long_short_spread": training.get("long_short_spread"),
+                "validation_IC": validation.get("ic"),
+                "validation_excess_sharpe": validation.get("excess_sharpe"),
+            }
         
         try:
             index_mapping = {

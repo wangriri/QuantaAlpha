@@ -72,6 +72,11 @@ class FactorLibraryManager:
             logger.warning("experiment is None, skip saving factors")
             return
         backtest_results = self._extract_backtest_results(experiment)
+        is_single_factor_bundle = (
+            isinstance(backtest_results, dict)
+            and backtest_results.get("evaluation_engine") == "oto_single_factor_v1"
+            and isinstance(backtest_results.get("factors"), dict)
+        )
         feedback_dict = self._extract_feedback(feedback)
         sub_tasks = getattr(experiment, "sub_tasks", []) or []
         sub_workspaces = getattr(experiment, "sub_workspace_list", []) or []
@@ -85,6 +90,7 @@ class FactorLibraryManager:
             factor_id = hashlib.md5(
                 f"{factor_name}_{factor_expr}".encode()
             ).hexdigest()[:16]
+            existing_entry = self.data.get("factors", {}).get(factor_id, {})
 
             code = ""
             cache_location = {}
@@ -116,6 +122,19 @@ class FactorLibraryManager:
                             f"result.h5 missing for {factor_name} ({h5_file}), will recompute from expression in backtest"
                         )
 
+            evaluation_v2 = (
+                backtest_results.get("factors", {}).get(factor_name, {})
+                if is_single_factor_bundle
+                else existing_entry.get("evaluation_v2", {})
+            )
+            qlib_legacy = existing_entry.get("qlib_legacy")
+            if qlib_legacy is None and existing_entry.get("backtest_results"):
+                qlib_legacy = existing_entry.get("backtest_results")
+            lifecycle = evaluation_v2.get("lifecycle") or existing_entry.get("lifecycle") or {
+                "status": "not_evaluated",
+                "active": False,
+            }
+
             factor_entry = {
                 "factor_id": factor_id,
                 "factor_name": factor_name,
@@ -135,7 +154,11 @@ class FactorLibraryManager:
                     "planning_direction": planning_direction or "",
                     "created_at": datetime.now().isoformat(),
                 },
-                "backtest_results": backtest_results,
+                "backtest_results": existing_entry.get("backtest_results", {}) if is_single_factor_bundle else backtest_results,
+                "qlib_legacy": qlib_legacy or {},
+                "evaluation_v2": evaluation_v2,
+                "lifecycle": lifecycle,
+                "oos_status": "sealed",
                 "feedback": feedback_dict,
             }
 
@@ -146,7 +169,8 @@ class FactorLibraryManager:
 
         self._save()
         logger.info(
-            f"Saved {len(sub_tasks)} factors to {self.library_path} (backtest_results: {len(backtest_results)} metrics)"
+            f"Saved {len(sub_tasks)} factors to {self.library_path} "
+            f"(engine={'oto_single_factor_v1' if is_single_factor_bundle else 'qlib_legacy'})"
         )
 
     @staticmethod
@@ -297,6 +321,8 @@ class FactorLibraryManager:
         result = getattr(experiment, "result", None)
         if result is None:
             return {}
+        if isinstance(result, dict) and result.get("evaluation_engine") == "oto_single_factor_v1":
+            return result
         if isinstance(result, pd.Series):
             out = {}
             for key, val in result.items():
