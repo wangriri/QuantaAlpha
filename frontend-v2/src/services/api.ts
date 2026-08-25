@@ -10,6 +10,9 @@ import type {
   Factor,
   PromptPack,
   Task,
+  TraceArtifact,
+  TraceDetail,
+  TraceRunSummary,
   WsMessage,
 } from '@/types';
 
@@ -64,6 +67,22 @@ export async function cancelMining(taskId: string) {
 
 export async function listTasks() {
   return request<{ tasks: Task[] }>('/api/v1/mining/tasks/list');
+}
+
+// ========================== Run Trace API ==========================
+
+export async function listTraces() {
+  return request<{ runs: TraceRunSummary[] }>('/api/v1/traces');
+}
+
+export async function getTrace(runId: string) {
+  return request<TraceDetail>(`/api/v1/traces/${encodeURIComponent(runId)}`);
+}
+
+export async function getTraceArtifact(runId: string, path: string) {
+  return request<TraceArtifact>(
+    `/api/v1/traces/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(path)}`
+  );
 }
 
 // ========================== Factor API ==========================
@@ -138,27 +157,82 @@ export async function warmCache(library?: string) {
   });
 }
 
-// ========================== Backtest API ==========================
+// ========================== Single-factor Evaluation API ==========================
 
-export interface BacktestStartParams {
+export interface EvaluationStartParams {
   factorJson: string;
-  factorSource?: string;
+  mode?: 'unevaluated' | 'all' | 'specified';
+  factorIds?: string[];
+  refreshMarketCache?: boolean;
   configPath?: string;
 }
 
-export async function startBacktest(params: BacktestStartParams) {
-  return request<{ taskId: string; task: Task }>('/api/v1/backtest/start', {
+export async function startEvaluation(params: EvaluationStartParams) {
+  return request<{ taskId: string; task: Task }>('/api/v1/evaluations/start', {
     method: 'POST',
     body: JSON.stringify(params),
   });
 }
 
-export async function getBacktestStatus(taskId: string) {
-  return request<{ task: Task }>(`/api/v1/backtest/${taskId}`);
+export async function getEvaluationStatus(taskId: string) {
+  return request<{ task: Task }>(`/api/v1/evaluations/${taskId}`);
 }
 
-export async function cancelBacktest(taskId: string) {
-  return request(`/api/v1/backtest/${taskId}`, { method: 'DELETE' });
+export async function cancelEvaluation(taskId: string) {
+  return request(`/api/v1/evaluations/${taskId}`, { method: 'DELETE' });
+}
+
+export interface EvaluationConfig {
+  trainingStart: string;
+  trainingEnd: string;
+  validationStart: string;
+  validationEnd: string;
+  icThreshold: number;
+  icirThreshold: number;
+  spreadThreshold: number;
+  excessSharpeThreshold: number;
+  groupCount: number;
+  feeThrough2023: number;
+  feeFrom2024: number;
+  oosStatus: string;
+  engine: string;
+}
+
+export async function getEvaluationConfig() {
+  return request<{ config: EvaluationConfig }>('/api/v1/evaluation/config');
+}
+
+export async function updateEvaluationConfig(update: Partial<EvaluationConfig>) {
+  return request<{ config: EvaluationConfig }>('/api/v1/evaluation/config', {
+    method: 'PUT',
+    body: JSON.stringify(update),
+  });
+}
+
+export async function getEvaluationArtifact(path: string) {
+  return request<{ rows: Record<string, string>[]; name: string }>(`/api/v1/evaluation/artifact?path=${encodeURIComponent(path)}`);
+}
+
+export async function listDedupReports() {
+  return request<{ reports: any[] }>('/api/v1/dedup/reports');
+}
+
+export async function generateDedupReport(factorJson: string) {
+  return request<{ report: any }>('/api/v1/dedup/reports', {
+    method: 'POST',
+    body: JSON.stringify({ factorJson }),
+  });
+}
+
+export async function getDedupReport(reportId: string) {
+  return request<{ report: any }>(`/api/v1/dedup/reports/${reportId}`);
+}
+
+export async function archiveDuplicateFactors(reportId: string, factorIds: string[]) {
+  return request(`/api/v1/dedup/reports/${reportId}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({ factorIds }),
+  });
 }
 
 // ========================== System Config API ==========================

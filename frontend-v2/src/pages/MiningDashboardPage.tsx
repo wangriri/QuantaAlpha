@@ -1,4 +1,5 @@
 import React from 'react';
+import { Workflow } from 'lucide-react';
 import { ProgressSidebar } from '@/components/ProgressSidebar';
 import { LiveCharts } from '@/components/LiveCharts';
 import { ChatInput } from '@/components/ChatInput';
@@ -48,6 +49,20 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
       onNavigate={onNavigate || (() => {})}
       showNavigation={!!onNavigate}
     >
+      <div className="mb-4 flex justify-end">
+        <button
+          onClick={() => {
+            const runId = task.traceRunId || task.config?.traceRunId;
+            if (runId) localStorage.setItem('quantaalpha_trace_run_id', runId);
+            onNavigate?.('trace');
+          }}
+          className="flex items-center gap-2 border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition-all hover:bg-primary hover:text-primary-foreground"
+          title="查看这次运行的结构化输出文件和 Agent 思考过程"
+        >
+          <Workflow className="h-4 w-4" />
+          查看挖掘过程
+        </button>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="lg:col-span-1">
           <ProgressSidebar progress={task.progress} />

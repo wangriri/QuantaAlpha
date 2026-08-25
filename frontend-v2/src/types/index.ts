@@ -1,5 +1,5 @@
 // Task status
-export type TaskStatus = 'idle' | 'running' | 'completed' | 'failed';
+export type TaskStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type PromptPack = 'zh_quant_v1' | 'en_default';
 
 // Execution phase
@@ -13,6 +13,24 @@ export type ExecutionPhase =
 
 // Factor quality level
 export type FactorQuality = 'high' | 'medium' | 'low';
+export type EvaluationStatus = 'not_evaluated' | 'passed' | 'failed' | 'lookahead_rejected' | 'data_error' | 'running';
+
+export interface EvaluationMetrics {
+  ic?: number;
+  ic_abs?: number;
+  icir?: number;
+  rank_ic?: number;
+  rank_icir?: number;
+  icir_annualized_reference?: number;
+  rank_icir_annualized_reference?: number;
+  long_short_spread?: number;
+  excess_sharpe?: number;
+  half_life?: number | null;
+  valid_days?: number;
+  head_group_return_gross?: number;
+  tail_group_return_gross?: number;
+  coverage?: { valid_days?: number; expected_days?: number; day_ratio?: number; median_stock_count?: number; min_stock_count?: number; max_stock_count?: number };
+}
 
 // Task configuration
 export interface TaskConfig {
@@ -41,6 +59,7 @@ export interface TaskConfig {
   qualityGateEnabled?: boolean;
   backtestTimeout?: number;
   promptPack?: PromptPack;
+  traceRunId?: string;
 }
 
 // Real-time metrics
@@ -106,6 +125,16 @@ export interface Factor {
   factorExpression: string;
   factorDescription: string;
   quality: FactorQuality;
+  evaluationStatus?: EvaluationStatus;
+  directionMultiplier?: number;
+  trainingMetrics?: EvaluationMetrics;
+  validationMetrics?: EvaluationMetrics;
+  gateResults?: Record<string, { passed?: boolean; value?: number; threshold?: number }>;
+  artifacts?: Record<string, string>;
+  lifecycle?: { status?: string; active?: boolean; reason?: string };
+  oosStatus?: string;
+  subperiods?: Record<string, EvaluationMetrics>;
+  lookaheadAudit?: Record<string, any>;
 
   // Backtest metrics
   ic: number;
@@ -155,8 +184,63 @@ export interface Task {
   metrics?: RealtimeMetrics;
   result?: BacktestResult;
   logs: LogEntry[];
+  traceRunId?: string;
+  traceDir?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TraceRunSummary {
+  runId: string;
+  status: string;
+  researchTopic?: string;
+  startedAt?: string;
+  endedAt?: string;
+  updatedAt?: string;
+  promptPack?: string;
+  roundCount: number;
+  taskCount: number;
+  factorCount: number;
+  traceDir: string;
+  graphComplete?: boolean;
+}
+
+export interface TraceNode {
+  id: string;
+  type: string;
+  label: string;
+  path?: string;
+  status?: string;
+  phase?: string;
+  round_idx?: number;
+  kind?: 'agent' | 'program' | 'factor' | 'evaluation' | 'attempt' | 'storage';
+  explanation?: string;
+  preview?: Record<string, any>;
+  direction_text?: string;
+}
+
+export interface TraceEdge {
+  from: string;
+  to: string;
+  type: string;
+}
+
+export interface TraceDetail {
+  summary: TraceRunSummary;
+  nodes: TraceNode[];
+  edges: TraceEdge[];
+  rounds: any[];
+  tasks: any[];
+  factors: any[];
+  timeline: any[];
+}
+
+export interface TraceArtifact {
+  runId: string;
+  path: string;
+  kind: 'json' | 'jsonl' | 'yaml' | 'text';
+  content: any;
+  updatedAt?: string;
 }
 
 // API Response
@@ -173,7 +257,8 @@ export type WsMessageType =
   | 'metrics'
   | 'log'
   | 'result'
-  | 'error';
+  | 'error'
+  | 'trace';
 
 // WebSocket message
 export interface WsMessage {

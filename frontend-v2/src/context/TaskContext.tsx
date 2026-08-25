@@ -19,14 +19,14 @@ import {
   startMining as apiStartMining,
   getMiningStatus,
   cancelMining as apiCancelMining,
-  startBacktest as apiStartBacktest,
-  getBacktestStatus,
-  cancelBacktest as apiCancelBacktest,
+  startEvaluation as apiStartEvaluation,
+  getEvaluationStatus,
+  cancelEvaluation as apiCancelEvaluation,
   connectMiningWs,
   healthCheck,
   getSystemConfig,
 } from '@/services/api';
-import type { BacktestStartParams } from '@/services/api';
+import type { EvaluationStartParams } from '@/services/api';
 import { getDefaultMiningDirection } from '@/utils/miningDirections';
 
 // ========================== Backtest local type ==========================
@@ -65,7 +65,7 @@ interface TaskContextValue {
   // ---- Backtest ----
   backtestTask: BacktestTask | null;
   backtestLogs: LogEntry[];
-  startBacktestTask: (params: BacktestStartParams) => Promise<void>;
+  startBacktestTask: (params: EvaluationStartParams) => Promise<void>;
   stopBacktestTask: () => void;
 }
 
@@ -198,6 +198,14 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           case 'result':
             updated.status = msg.data.status === 'completed' ? 'completed' : 'failed';
             if (msg.data.metrics) updated.metrics = msg.data.metrics;
+            break;
+          case 'trace':
+            updated.traceRunId = msg.data.traceRunId;
+            updated.traceDir = msg.data.traceDir;
+            updated.config = {
+              ...updated.config,
+              traceRunId: msg.data.traceRunId,
+            } as TaskConfig;
             break;
           case 'error':
             updated.status = 'failed';
@@ -460,7 +468,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   // ==================================================================
-  // BACKTEST
+  // SINGLE-FACTOR EVALUATION
   // ==================================================================
   const [backtestTask, setBacktestTask] = useState<BacktestTask | null>(null);
   const [backtestLogs, setBacktestLogs] = useState<LogEntry[]>([]);
@@ -468,7 +476,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const backtestWsRef = useRef<WebSocket | null>(null);
   const backtestPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // WS handler for backtest
+  // WS handler for evaluation
   // IMPORTANT: setBacktestLogs must NOT be inside setBacktestTask's updater function,
   // because React StrictMode double-invokes updater functions in development mode,
   // which would cause every log entry to be added twice.
@@ -509,11 +517,11 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Start backtest
+  // Start evaluation
   const startBacktestTask = useCallback(
-    async (params: BacktestStartParams) => {
+    async (params: EvaluationStartParams) => {
       setBacktestLogs([]);
-      const resp = await apiStartBacktest(params);
+      const resp = await apiStartEvaluation(params);
       if (!resp.success || !resp.data) throw new Error(resp.error || 'Failed');
 
       const taskData = resp.data.task as unknown as BacktestTask;
@@ -524,7 +532,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resp.data.taskId,
         handleBacktestWsMessage,
         () => {
-          getBacktestStatus(resp.data!.taskId).then((r) => {
+          getEvaluationStatus(resp.data!.taskId).then((r) => {
             if (r.data?.task) setBacktestTask(r.data.task as unknown as BacktestTask);
           });
         },
@@ -534,7 +542,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Polling fallback
       backtestPollingRef.current = setInterval(async () => {
         try {
-          const r = await getBacktestStatus(resp.data!.taskId);
+          const r = await getEvaluationStatus(resp.data!.taskId);
           if (r.data?.task) {
             const t = r.data.task as unknown as BacktestTask;
 
@@ -568,7 +576,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [handleBacktestWsMessage],
   );
 
-  // Stop backtest
+  // Stop evaluation
   const stopBacktestTask = useCallback(async () => {
     if (!backtestTask) return;
     backtestWsRef.current?.close();
@@ -578,7 +586,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       backtestPollingRef.current = null;
     }
     try {
-      await apiCancelBacktest(backtestTask.taskId);
+      await apiCancelEvaluation(backtestTask.taskId);
     } catch {
       // ignore
     }
