@@ -583,7 +583,7 @@ export const SettingsPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">进化轮次</label>
+                  <label className="block text-sm font-medium mb-2">总进化轮次</label>
                   <input
                     type="number"
                     value={config.defaultMaxRounds}
@@ -593,7 +593,7 @@ export const SettingsPage: React.FC = () => {
                     className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    因子自我进化和优化的最大迭代次数 (1-20)
+                    包含 original 初始轮；例如 3 = original + mutation + crossover
                   </p>
                 </div>
 

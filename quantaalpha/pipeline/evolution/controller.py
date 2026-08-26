@@ -130,6 +130,13 @@ class EvolutionController:
             "crossover_groups_remaining": len(self._crossover_groups) - self._crossover_idx,
             "pool_stats": self.pool.get_statistics(),
         }
+
+    def _max_rounds_reached(self) -> bool:
+        """Return True when no new round is allowed to start."""
+        if self._current_round >= self.config.max_rounds:
+            logger.info(f"Evolution complete: reached max rounds ({self.config.max_rounds})")
+            return True
+        return False
     
     def get_next_task(self) -> Optional[dict[str, Any]]:
         """
@@ -145,9 +152,7 @@ class EvolutionController:
             
             Returns None if evolution is complete.
         """
-        # Check if we've reached max rounds
-        if self._current_round >= self.config.max_rounds:
-            logger.info(f"Evolution complete: reached max rounds ({self.config.max_rounds})")
+        if self._max_rounds_reached():
             return None
         
         # Phase: ORIGINAL
@@ -174,8 +179,7 @@ class EvolutionController:
         Returns:
             List of task dictionaries, or empty list if phase is complete
         """
-        # Check if we've reached max rounds
-        if self._current_round >= self.config.max_rounds:
+        if self._max_rounds_reached():
             return []
         
         tasks = []
@@ -315,6 +319,8 @@ class EvolutionController:
             # Transition based on enabled phases
             if len(self._directions_completed) >= self.config.num_directions:
                 self._current_round += 1
+                if self._max_rounds_reached():
+                    return
                 if self.config.mutation_enabled:
                     self._current_phase = RoundPhase.MUTATION
                     logger.info(f"All original rounds complete, transitioning to mutation (round {self._current_round})")
@@ -331,6 +337,8 @@ class EvolutionController:
             self._mutation_targets = []
             self._mutation_idx = 0
             self._current_round += 1
+            if self._max_rounds_reached():
+                return
             
             # Transition based on enabled phases
             if self.config.crossover_enabled:
@@ -346,6 +354,8 @@ class EvolutionController:
             # Update crossover index
             self._crossover_idx = len(self._crossover_groups)
             self._current_round += 1
+            if self._max_rounds_reached():
+                return
             
             # Transition based on enabled phases
             if self.config.mutation_enabled:
@@ -380,6 +390,9 @@ class EvolutionController:
         
         Returns the first task of the next phase, or None if evolution is complete.
         """
+        if self._max_rounds_reached():
+            return None
+
         # Case 1: Both mutation and crossover enabled - follow standard flow
         if self.config.mutation_enabled and self.config.crossover_enabled:
             self._current_phase = RoundPhase.MUTATION
@@ -406,12 +419,17 @@ class EvolutionController:
     
     def _get_mutation_task(self) -> Optional[dict[str, Any]]:
         """Get next mutation round task."""
+        if self._max_rounds_reached():
+            return None
+
         # If mutation is disabled, skip to crossover or stay in mutation loop
         if not self.config.mutation_enabled:
             if self.config.crossover_enabled:
                 self._prepare_crossover_groups()
                 self._current_phase = RoundPhase.CROSSOVER
                 self._current_round += 1
+                if self._max_rounds_reached():
+                    return None
                 return self._get_crossover_task()
             return None
         
@@ -452,6 +470,8 @@ class EvolutionController:
         self._mutation_targets = []  # Reset for next mutation round
         self._mutation_idx = 0
         self._current_round += 1
+        if self._max_rounds_reached():
+            return None
         
         # Determine next phase based on config
         if self.config.crossover_enabled:
@@ -640,11 +660,16 @@ class EvolutionController:
     
     def _get_crossover_task(self) -> Optional[dict[str, Any]]:
         """Get next crossover round task."""
+        if self._max_rounds_reached():
+            return None
+
         # If crossover is disabled, skip to mutation or stay in crossover loop
         if not self.config.crossover_enabled:
             if self.config.mutation_enabled:
                 self._current_phase = RoundPhase.MUTATION
                 self._current_round += 1
+                if self._max_rounds_reached():
+                    return None
                 return self._get_mutation_task()
             return None
         
@@ -652,6 +677,8 @@ class EvolutionController:
         if self._crossover_idx >= len(self._crossover_groups):
             # All crossover tasks complete, transition to next phase
             self._current_round += 1
+            if self._max_rounds_reached():
+                return None
             
             if self.config.mutation_enabled:
                 self._current_phase = RoundPhase.MUTATION
