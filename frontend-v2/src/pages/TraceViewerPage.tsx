@@ -478,7 +478,7 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
               <code className="block break-all border-y border-border py-2 text-xs text-muted-foreground">{selectedNode.path || '--'}</code>
             </section>
 
-            <details open className="border border-border">
+            <details className="border border-border">
               <summary className="cursor-pointer bg-secondary/60 px-3 py-2 text-sm font-semibold">原始文件内容</summary>
               <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap p-3 text-xs leading-5">
                 {artifact ? JSON.stringify(artifact.content, null, 2) : '无法读取或该节点没有独立文件。'}
