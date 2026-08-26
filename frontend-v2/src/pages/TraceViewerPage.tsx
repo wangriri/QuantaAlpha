@@ -20,6 +20,11 @@ import {
 import { getTrace, getTraceArtifact, listTraces } from '@/services/api';
 import type { TraceArtifact, TraceDetail, TraceNode, TraceRunSummary } from '@/types';
 
+type TraceTreeItem = {
+  node: TraceNode;
+  children: TraceTreeItem[];
+};
+
 const typeLabels: Record<string, string> = {
   user_input: '用户输入',
   config_snapshot: '配置快照',
@@ -159,6 +164,117 @@ const NodeButton: React.FC<{
   );
 };
 
+const sortNodes = (a: TraceNode, b: TraceNode) =>
+  (nodeOrder[a.type] ?? 99) - (nodeOrder[b.type] ?? 99) || a.id.localeCompare(b.id);
+
+const buildTraceTree = (
+  rootId: string,
+  nodeById: Map<string, TraceNode>,
+  childMap: Map<string, string[]>,
+  fallbackNodes: TraceNode[] = [],
+) => {
+  const consumed = new Set<string>();
+
+  const build = (nodeId: string, stack = new Set<string>()): TraceTreeItem | null => {
+    const node = nodeById.get(nodeId);
+    if (!node || stack.has(nodeId)) return null;
+    const nextStack = new Set(stack).add(nodeId);
+    consumed.add(nodeId);
+    const children = (childMap.get(nodeId) || [])
+      .map((childId) => build(childId, nextStack))
+      .filter((item): item is TraceTreeItem => Boolean(item))
+      .sort((a, b) => sortNodes(a.node, b.node));
+    return { node, children };
+  };
+
+  const roots = (childMap.get(rootId) || [])
+    .map((nodeId) => build(nodeId))
+    .filter((item): item is TraceTreeItem => Boolean(item))
+    .sort((a, b) => sortNodes(a.node, b.node));
+
+  const appendFallbackChildren = (items: TraceTreeItem[]) => {
+    const byId = new Map<string, TraceTreeItem>();
+    const collect = (item: TraceTreeItem) => {
+      byId.set(item.node.id, item);
+      item.children.forEach(collect);
+    };
+    items.forEach(collect);
+
+    fallbackNodes
+      .filter((node) => node.id.startsWith(`${rootId}.`) && node.id !== rootId && !consumed.has(node.id))
+      .sort(sortNodes)
+      .forEach((node) => {
+        const parentId = node.id.split('.').slice(0, -1).join('.');
+        const parent = byId.get(parentId);
+        const item = { node, children: [] };
+        if (parent) {
+          parent.children.push(item);
+          parent.children.sort((a, b) => sortNodes(a.node, b.node));
+        } else {
+          items.push(item);
+          items.sort((a, b) => sortNodes(a.node, b.node));
+        }
+        byId.set(node.id, item);
+      });
+  };
+
+  appendFallbackChildren(roots);
+  return roots;
+};
+
+const TraceTreeNode: React.FC<{
+  item: TraceTreeItem;
+  depth: number;
+  selectedNodeId: string;
+  collapsedSections: Record<string, boolean>;
+  onToggle: (id: string) => void;
+  onSelect: (id: string) => void;
+}> = ({ item, depth, selectedNodeId, collapsedSections, onToggle, onSelect }) => {
+  const hasChildren = item.children.length > 0;
+  const collapsed = !!collapsedSections[item.node.id];
+  return (
+    <div className="space-y-2">
+      <div className="flex items-stretch gap-2">
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => onToggle(item.node.id)}
+            className="flex w-7 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground hover:text-foreground"
+            title={collapsed ? '展开子节点' : '折叠子节点'}
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+        ) : (
+          <div className="w-7 shrink-0 border-l border-border" />
+        )}
+        <NodeButton
+          node={item.node}
+          depth={depth}
+          selected={item.node.id === selectedNodeId}
+          onClick={() => onSelect(item.node.id)}
+        />
+      </div>
+      {hasChildren && !collapsed && (
+        <div className="ml-7 border-l-2 border-border/80 pl-3">
+          <div className="space-y-2">
+            {item.children.map((child) => (
+              <TraceTreeNode
+                key={child.node.id}
+                item={child}
+                depth={depth + 1}
+                selectedNodeId={selectedNodeId}
+                collapsedSections={collapsedSections}
+                onToggle={onToggle}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SectionShell: React.FC<{
   title: string;
   subtitle?: string;
@@ -270,26 +386,47 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
   const planningNodes = useMemo(
     () => (detail?.nodes || [])
       .filter((node) => !node.id.includes('.round_') || ['user_input', 'config_snapshot', 'planning_prompt', 'planning_output', 'direction'].includes(node.type))
-      .sort((a, b) => (nodeOrder[a.type] ?? 99) - (nodeOrder[b.type] ?? 99) || a.id.localeCompare(b.id)),
+      .sort(sortNodes),
     [detail],
   );
 
   const roundGroups = useMemo(() => {
     const nodes = detail?.nodes || [];
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const childMap = new Map<string, string[]>();
+    (detail?.edges || []).forEach((edge) => {
+      if (!nodeById.has(edge.from) || !nodeById.has(edge.to)) return;
+      const next = childMap.get(edge.from) || [];
+      if (!next.includes(edge.to)) next.push(edge.to);
+      childMap.set(edge.from, next);
+    });
+
     const rounds = nodes
       .filter((node) => node.type === 'round')
       .sort((a, b) => Number(a.round_idx ?? 0) - Number(b.round_idx ?? 0));
+
     return rounds.map((round) => {
-      const tasks = nodes
-        .filter((node) => node.type === 'task' && node.id.startsWith(`${round.id}.`))
+      const edgeTaskIds = childMap.get(round.id) || [];
+      const edgeTasks = edgeTaskIds
+        .map((id) => nodeById.get(id))
+        .filter((node): node is TraceNode => node !== undefined && node.type === 'task');
+      const fallbackTasks = nodes.filter((node) => node.type === 'task' && node.id.startsWith(`${round.id}.`));
+      const taskIds = Array.from(new Set([...edgeTasks, ...fallbackTasks].map((node) => node.id)));
+      const tasks = taskIds
+        .map((id) => nodeById.get(id))
+        .filter((node): node is TraceNode => node !== undefined)
         .sort((a, b) => a.id.localeCompare(b.id));
+
       return {
         round,
         tasks: tasks.map((task) => ({
           task,
-          children: nodes
-            .filter((node) => node.id.startsWith(`${task.id}.`) && node.id !== task.id)
-            .sort((a, b) => (nodeOrder[a.type] ?? 99) - (nodeOrder[b.type] ?? 99) || a.id.localeCompare(b.id)),
+          children: buildTraceTree(
+            task.id,
+            nodeById,
+            childMap,
+            nodes.filter((node) => node.id.startsWith(`${task.id}.`) && node.id !== task.id),
+          ),
         })),
       };
     });
@@ -417,16 +554,24 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
                   <SectionShell
                     key={task.id}
                     title={task.label}
-                    subtitle={task.preview?.研究方向 || task.direction_text || '任务下包含假设、公式、候选因子、校验和评价节点'}
-                    badge={`${children.length} 个子节点`}
+                    subtitle={task.preview?.研究方向 || task.direction_text || '任务下按文件/graph 关系挂载假设、公式、候选因子、校验、因子值和评价'}
+                    badge={`${children.length} 个直接子节点`}
                     collapsed={!!collapsedSections[task.id]}
                     onToggle={() => toggleSection(task.id)}
                   >
                     <div className="border-l-2 border-border pl-4">
                       <NodeButton node={task} selected={task.id === selectedNodeId} onClick={() => setSelectedNodeId(task.id)} />
                       <div className="mt-3 space-y-2">
-                        {children.map((node) => (
-                          <NodeButton key={node.id} node={node} depth={1} selected={node.id === selectedNodeId} onClick={() => setSelectedNodeId(node.id)} />
+                        {children.map((item) => (
+                          <TraceTreeNode
+                            key={item.node.id}
+                            item={item}
+                            depth={1}
+                            selectedNodeId={selectedNodeId}
+                            collapsedSections={collapsedSections}
+                            onToggle={toggleSection}
+                            onSelect={setSelectedNodeId}
+                          />
                         ))}
                       </div>
                     </div>
