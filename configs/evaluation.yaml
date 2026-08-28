@@ -18,6 +18,9 @@ alignment:
   factor_lag_trading_days: 1
   label: oto_open_to_open
 
+portfolio:
+  rebalance_period_days: 3
+
 lookahead_audit:
   enabled: true
   static_check: true
@@ -62,4 +65,3 @@ deduplication:
   methods: [pearson, spearman]
   manual_confirmation: true
   archive_instead_of_delete: true
-

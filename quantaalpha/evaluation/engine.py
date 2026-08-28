@@ -256,7 +256,15 @@ class SingleFactorEvaluator:
     ) -> PeriodEvaluation:
         if aligned.empty:
             return PeriodEvaluation(
-                metrics={"status": "no_data", "coverage": {}},
+                metrics={
+                    "status": "no_data",
+                    "coverage": {},
+                    "portfolio": {
+                        "rebalance_period_days": self._rebalance_period_days(),
+                        "rebalance_days": 0,
+                        "return_days": 0,
+                    },
+                },
                 daily_ic=pd.DataFrame(),
                 group_returns=pd.DataFrame(),
                 excess_returns=pd.DataFrame(),
@@ -282,6 +290,11 @@ class SingleFactorEvaluator:
         expected_days = int(benchmark_panel["entry_date"].nunique()) if benchmark_panel is not None else int(aligned["entry_date"].nunique())
         valid_days = int(aligned["entry_date"].nunique())
         counts = aligned.groupby("entry_date").size()
+        portfolio = {
+            "rebalance_period_days": self._rebalance_period_days(),
+            "rebalance_days": int(grouped["is_rebalance_day"].sum()) if "is_rebalance_day" in grouped else 0,
+            "return_days": int(len(grouped)),
+        }
         metrics = {
             "status": "completed",
             "ic": raw_ic,
@@ -297,6 +310,7 @@ class SingleFactorEvaluator:
             "excess_sharpe": sharpe,
             "head_group_return_gross": _finite(grouped["G9"].sum()) if "G9" in grouped else None,
             "tail_group_return_gross": _finite(grouped["G0"].sum()) if "G0" in grouped else None,
+            "portfolio": portfolio,
             "coverage": {
                 "valid_days": valid_days,
                 "expected_days": expected_days,
@@ -335,6 +349,13 @@ class SingleFactorEvaluator:
                 return float(item["rate"])
         return 0.0
 
+    def _rebalance_period_days(self) -> int:
+        value = self.config.section("portfolio").get("rebalance_period_days", 3)
+        days = int(value)
+        if days < 1:
+            raise ValueError("portfolio.rebalance_period_days must be >= 1")
+        return days
+
     def _group_returns(
         self,
         aligned: pd.DataFrame,
@@ -346,52 +367,103 @@ class SingleFactorEvaluator:
         noise_std = float(metrics_cfg.get("qcut_noise_std", 1e-8))
         seed = metrics_cfg.get("qcut_random_seed")
         rng = np.random.default_rng(seed) if seed is not None else None
+        rebalance_period = self._rebalance_period_days()
+        current_groups: dict[int, set[str]] = {index: set() for index in range(group_count)}
         previous_groups: dict[int, set[str]] = {index: set() for index in range(group_count)}
         previous_benchmark: set[str] = set()
+        current_benchmark: set[str] = set()
+        days_since_rebalance = rebalance_period
         group_rows: list[dict[str, Any]] = []
         excess_rows: list[dict[str, Any]] = []
         benchmark_by_date = {
             pd.Timestamp(date): group[["code", "oto_return"]].dropna()
             for date, group in (benchmark_panel.groupby("entry_date") if benchmark_panel is not None else [])
         }
+        aligned_by_date = {
+            pd.Timestamp(date): group
+            for date, group in aligned.groupby("entry_date", sort=True)
+        }
+        all_dates = sorted(benchmark_by_date.keys() if benchmark_by_date else aligned_by_date.keys())
 
-        for date, source in aligned.groupby("entry_date", sort=True):
-            day = source[["code", "factor_value", "oto_return"]].dropna().copy()
-            if len(day) < group_count:
-                continue
-            day["oriented_factor"] = day["factor_value"] * direction
-            noise = (rng.normal(0.0, noise_std, len(day)) if rng is not None else np.random.normal(0.0, noise_std, len(day)))
-            try:
-                day["group"] = pd.qcut(day["oriented_factor"] + noise, group_count, labels=False)
-            except ValueError:
-                continue
+        for date in all_dates:
+            selection_day = aligned_by_date.get(pd.Timestamp(date), pd.DataFrame())
+            return_day = benchmark_by_date.get(pd.Timestamp(date))
+            if return_day is None:
+                return_day = selection_day[["code", "oto_return"]].dropna()
             rate = self._fee_rate(pd.Timestamp(date))
-            row: dict[str, Any] = {"date": pd.Timestamp(date)}
+            should_rebalance = days_since_rebalance >= rebalance_period or not any(current_groups.values())
+            is_rebalance_day = False
+            rebalance_skipped = False
+            row: dict[str, Any] = {
+                "date": pd.Timestamp(date),
+                "is_rebalance_day": False,
+                "rebalance_skipped": False,
+                "rebalance_period_days": rebalance_period,
+            }
+
+            if should_rebalance:
+                day = selection_day[["code", "factor_value"]].dropna().copy()
+                if len(day) >= group_count:
+                    day["oriented_factor"] = day["factor_value"] * direction
+                    noise = (
+                        rng.normal(0.0, noise_std, len(day))
+                        if rng is not None
+                        else np.random.normal(0.0, noise_std, len(day))
+                    )
+                    try:
+                        day["group"] = pd.qcut(day["oriented_factor"] + noise, group_count, labels=False)
+                        next_groups = {
+                            group_index: set(day[day["group"] == group_index]["code"].astype(str))
+                            for group_index in range(group_count)
+                        }
+                        current_groups = next_groups
+                        is_rebalance_day = True
+                        days_since_rebalance = 1
+                    except ValueError:
+                        rebalance_skipped = True
+                else:
+                    rebalance_skipped = True
+
+            if not any(current_groups.values()):
+                continue
+            if not is_rebalance_day:
+                days_since_rebalance += 1
+
+            row["is_rebalance_day"] = is_rebalance_day
+            row["rebalance_skipped"] = rebalance_skipped
             top_net = None
+            returns = return_day.set_index("code")["oto_return"]
             for group_index in range(group_count):
-                members = day[day["group"] == group_index]
-                current = set(members["code"].astype(str))
+                current = current_groups[group_index]
                 previous = previous_groups[group_index]
-                denominator = max(len(current), len(previous))
-                fee = len(current - previous) * 2.0 * rate / denominator if denominator else 0.0
-                gross = _finite(members["oto_return"].mean())
+                fee = 0.0
+                if is_rebalance_day:
+                    denominator = max(len(current), len(previous))
+                    fee = len(current - previous) * 2.0 * rate / denominator if denominator else 0.0
+                    previous_groups[group_index] = set(current)
+                member_returns = returns.reindex(sorted(current)).dropna()
+                gross = _finite(member_returns.mean()) if not member_returns.empty else None
                 row[f"G{group_index}"] = gross
                 row[f"G{group_index}_fee"] = fee
-                previous_groups[group_index] = current
                 if group_index == group_count - 1 and gross is not None:
                     top_net = gross - fee
             group_rows.append(row)
 
-            benchmark_day = benchmark_by_date.get(pd.Timestamp(date), day[["code", "oto_return"]])
-            benchmark_members = set(benchmark_day["code"].astype(str))
-            denominator = max(len(benchmark_members), len(previous_benchmark))
-            benchmark_fee = (
-                len(benchmark_members - previous_benchmark) * 2.0 * rate / denominator if denominator else 0.0
-            )
+            benchmark_day = return_day
+            if is_rebalance_day or not current_benchmark:
+                current_benchmark = set(benchmark_day["code"].astype(str))
+            benchmark_members = current_benchmark
+            benchmark_fee = 0.0
+            if is_rebalance_day:
+                denominator = max(len(benchmark_members), len(previous_benchmark))
+                benchmark_fee = (
+                    len(benchmark_members - previous_benchmark) * 2.0 * rate / denominator if denominator else 0.0
+                )
+                previous_benchmark = set(benchmark_members)
             if not self.config.section("costs").get("charge_benchmark", True):
                 benchmark_fee = 0.0
-            benchmark_gross = _finite(benchmark_day["oto_return"].mean())
-            previous_benchmark = benchmark_members
+            benchmark_returns = benchmark_day.set_index("code")["oto_return"].reindex(sorted(benchmark_members)).dropna()
+            benchmark_gross = _finite(benchmark_returns.mean()) if not benchmark_returns.empty else None
             if top_net is not None and benchmark_gross is not None:
                 benchmark_net = benchmark_gross - benchmark_fee
                 excess_rows.append(
@@ -401,6 +473,8 @@ class SingleFactorEvaluator:
                         "benchmark_net_return": benchmark_net,
                         "excess_return": top_net - benchmark_net,
                         "benchmark_fee": benchmark_fee,
+                        "is_rebalance_day": is_rebalance_day,
+                        "rebalance_period_days": rebalance_period,
                     }
                 )
 
