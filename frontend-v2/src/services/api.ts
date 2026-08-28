@@ -192,6 +192,7 @@ export interface EvaluationConfig {
   spreadThreshold: number;
   excessSharpeThreshold: number;
   groupCount: number;
+  rebalancePeriodDays: number;
   feeThrough2023: number;
   feeFrom2024: number;
   oosStatus: string;
