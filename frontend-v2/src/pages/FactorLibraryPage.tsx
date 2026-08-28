@@ -10,10 +10,11 @@ import type { Factor } from '@/types';
 type StatusFilter = 'all' | 'not_evaluated' | 'passed' | 'failed' | 'duplicate_suspected' | 'archived';
 const labels: Record<string, string> = { not_evaluated: '未评估', passed: '通过', failed: '未通过', lookahead_rejected: '防未来拒绝', data_error: '可重试错误', duplicate_suspected: '疑似重复', duplicate_rejected: '已归档' };
 const number = (value: unknown, digits = 3) => typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '--';
+const metricValue = (value: unknown, digits = 3) => typeof value === 'string' ? value : number(value, digits);
 const statusOf = (factor: Factor) => factor.lifecycle?.status === 'duplicate_rejected' ? 'archived' : factor.lifecycle?.status === 'duplicate_suspected' ? 'duplicate_suspected' : factor.evaluationStatus || 'not_evaluated';
 
 const Metric: React.FC<{ label: string; value: unknown; passed?: boolean }> = ({ label, value, passed }) => (
-  <div className="border-l-2 border-border py-1 pl-3"><div className="flex items-center gap-1 text-xs text-muted-foreground">{passed === true ? <Check className="h-3 w-3 text-emerald-500" /> : passed === false ? <X className="h-3 w-3 text-red-500" /> : null}{label}</div><div className="mt-1 font-mono text-base font-semibold">{number(value)}</div></div>
+  <div className="border-l-2 border-border py-1 pl-3"><div className="flex items-center gap-1 text-xs text-muted-foreground">{passed === true ? <Check className="h-3 w-3 text-emerald-500" /> : passed === false ? <X className="h-3 w-3 text-red-500" /> : null}{label}</div><div className="mt-1 font-mono text-base font-semibold">{metricValue(value)}</div></div>
 );
 
 const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'groups' | 'excess' | 'decay' }> = ({ title, path, kind }) => {
@@ -24,9 +25,20 @@ const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'grou
   }, [path]);
   if (!path) return null;
   const xKey = kind === 'decay' ? 'lag' : 'date';
-  const keys = kind === 'groups' ? ['G0', 'G9'] : kind === 'excess' ? ['head_net_return', 'benchmark_net_return', 'excess_return'] : kind === 'decay' ? ['ic', 'rank_ic'] : ['ic', 'rank_ic'];
+  const keys = kind === 'groups' ? ['G0', 'G9', 'long_short_half'] : kind === 'excess' ? ['head_net_return', 'benchmark_net_return', 'excess_return'] : kind === 'decay' ? ['ic', 'rank_ic'] : ['ic', 'rank_ic'];
   const colors = ['#22c55e', '#ef4444', '#3b82f6'];
-  return <div className="border-t border-border pt-4"><h4 className="mb-3 text-sm font-medium">{title}</h4>{rows.length ? <div className="h-56"><ResponsiveContainer width="100%" height="100%"><LineChart data={rows}><XAxis dataKey={xKey} tick={{ fontSize: 10 }} minTickGap={40} /><YAxis tick={{ fontSize: 10 }} width={48} /><Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', fontSize: 12 }} />{keys.map((key, index) => <Line key={key} type="monotone" dataKey={key} dot={false} stroke={colors[index]} strokeWidth={1.5} connectNulls />)}</LineChart></ResponsiveContainer></div> : <p className="text-sm text-muted-foreground">产物暂无可读数据</p>}</div>;
+  const chartRows = kind === 'groups' ? rows.map((row) => ({
+    ...row,
+    long_short_half: (Number(row.G9) - Number(row.G0)) / 2,
+  })) : kind === 'excess' ? rows.reduce<Record<string, any>[]>((out, row) => {
+    const previous = out[out.length - 1] || {};
+    out.push({
+      ...row,
+      ...Object.fromEntries(keys.map((key) => [key, (Number(previous[key]) || 0) + (Number(row[key]) || 0)])),
+    });
+    return out;
+  }, []) : rows;
+  return <div className="border-t border-border pt-4"><h4 className="mb-3 text-sm font-medium">{title}</h4>{chartRows.length ? <div className="h-56"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><XAxis dataKey={xKey} tick={{ fontSize: 10 }} minTickGap={40} /><YAxis tick={{ fontSize: 10 }} width={48} /><Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', fontSize: 12 }} />{keys.map((key, index) => <Line key={key} type="monotone" dataKey={key} dot={false} stroke={colors[index]} strokeWidth={1.5} connectNulls />)}</LineChart></ResponsiveContainer></div> : <p className="text-sm text-muted-foreground">产物暂无可读数据</p>}</div>;
 };
 
 export const FactorLibraryPage: React.FC = () => {
@@ -71,6 +83,8 @@ export const FactorLibraryPage: React.FC = () => {
   const validation = evaluation.validation || selected?.validationMetrics || {};
   const gates = evaluation.gate_results || selected?.gateResults || {};
   const artifacts = evaluation.artifacts || selected?.artifacts || {};
+  const portfolio = training.portfolio || {};
+  const missingPortfolio = !training.portfolio;
 
   return <div className="space-y-5 animate-fade-in-up">
     <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><h1 className="flex items-center gap-3 text-3xl font-bold"><Database className="h-8 w-8 text-primary" />因子库</h1><p className="mt-1 text-sm text-muted-foreground">evaluation_v2 指标、生命周期和审计产物</p></div><div className="flex gap-2"><select value={library} onChange={(event) => { setLibrary(event.target.value); localStorage.setItem('quantaalpha_active_library', event.target.value); }} className="max-w-64 rounded-md border border-input bg-background px-3 py-2 text-sm">{libraries.map((item) => <option key={item}>{item}</option>)}</select><Button variant="outline" onClick={load} title="刷新"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button><Button variant="outline" onClick={exportLibrary} title="导出"><Download className="h-4 w-4" /></Button></div></div>
@@ -85,10 +99,10 @@ export const FactorLibraryPage: React.FC = () => {
     {selected && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSelected(null)}><div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-md border border-border bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-start justify-between border-b border-border bg-background px-5 py-4"><div className="min-w-0"><h2 className="break-words text-xl font-semibold">{selected.factorName || selected.factor_name}</h2><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">{labels[evaluation.status || selected.evaluationStatus || 'not_evaluated']}</Badge><Badge variant="outline">方向 {evaluation.direction_multiplier === -1 ? '-1' : '+1'}</Badge><Badge variant="outline"><ShieldCheck className="mr-1 h-3 w-3" />2026 {evaluation.oos_status || selected.oosStatus || 'sealed'}</Badge></div></div><Button variant="ghost" onClick={() => setSelected(null)} title="关闭"><X className="h-4 w-4" /></Button></div>
       <div className="space-y-6 p-5">
         <section><h3 className="mb-3 text-sm font-medium">四项训练门槛</h3><div className="grid grid-cols-2 gap-4 md:grid-cols-4"><Metric label="|IC|" value={gates.ic?.value ?? training.ic_abs} passed={gates.ic?.passed} /><Metric label="ICIR" value={gates.icir?.value ?? training.icir} passed={gates.icir?.passed} /><Metric label="G9-G0 算术收益差" value={gates.long_short_spread?.value ?? training.long_short_spread} passed={gates.long_short_spread?.passed} /><Metric label="头组超额 Sharpe" value={gates.excess_sharpe?.value ?? training.excess_sharpe} passed={gates.excess_sharpe?.passed} /></div></section>
-        <section><h3 className="mb-3 text-sm font-medium">组合调仓</h3><div className="grid grid-cols-3 gap-4"><Metric label="调仓周期（日）" value={training.portfolio?.rebalance_period_days} /><Metric label="调仓日数" value={training.portfolio?.rebalance_days} /><Metric label="收益日数" value={training.portfolio?.return_days} /></div></section>
+        <section><h3 className="mb-3 text-sm font-medium">组合调仓</h3><div className="grid grid-cols-3 gap-4"><Metric label="调仓周期（日）" value={portfolio.rebalance_period_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /><Metric label="调仓日数" value={portfolio.rebalance_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /><Metric label="收益日数" value={portfolio.return_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /></div></section>
         <section className="grid gap-4 md:grid-cols-2"><div><h3 className="mb-3 text-sm font-medium">训练 / 验证</h3><div className="overflow-hidden border-y border-border text-sm"><div className="grid grid-cols-3 px-2 py-2 text-xs text-muted-foreground"><span>区间</span><span>IC</span><span>超额 Sharpe</span></div><div className="grid grid-cols-3 border-t border-border px-2 py-2"><span>训练</span><span>{number(training.ic, 4)}</span><span>{number(training.excess_sharpe)}</span></div><div className="grid grid-cols-3 border-t border-border px-2 py-2"><span>2025H2</span><span>{number(validation.ic, 4)}</span><span>{number(validation.excess_sharpe)}</span></div>{Object.entries(evaluation.subperiods || selected.subperiods || {}).map(([name, metrics]: [string, any]) => <div key={name} className="grid grid-cols-3 border-t border-border px-2 py-2"><span>{name}</span><span>{number(metrics.ic, 4)}</span><span>{number(metrics.excess_sharpe)}</span></div>)}</div></div><div><h3 className="mb-3 text-sm font-medium">时间与防未来审计</h3><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">因子早于开仓</span><span>{evaluation.alignment?.factor_before_entry ? '通过' : '未通过'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">开仓早于退出</span><span>{evaluation.alignment?.entry_before_exit ? '通过' : '未通过'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">静态检查</span><span>{evaluation.lookahead_audit?.static?.status || '--'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">截断重算</span><span>{evaluation.lookahead_audit?.truncation?.status || '--'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">有效日 / 预期日</span><span>{training.coverage?.valid_days ?? '--'} / {training.coverage?.expected_days ?? '--'}</span></div></div></div></section>
         <section><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><Code className="h-4 w-4" />因子表达式</h3><code className="block break-all border-y border-border py-3 text-xs">{selected.factorExpression || selected.factor_expression}</code></section>
-        <ArtifactChart title="训练期每日 IC" path={artifacts.training_daily_ic} kind="ic" /><ArtifactChart title="IC 衰减与半衰期" path={artifacts.ic_decay} kind="decay" /><ArtifactChart title="十分组累计收益（G0 低值，G9 高值）" path={artifacts.training_group_cumulative} kind="groups" /><ArtifactChart title="头组、等权基线与超额收益" path={artifacts.training_excess_returns} kind="excess" />
+        <ArtifactChart title="十分组累计收益（G0 低值，G9 高值，蓝线为 (G9-G0)/2）" path={artifacts.training_group_cumulative} kind="groups" /><ArtifactChart title="训练期每日 IC" path={artifacts.training_daily_ic} kind="ic" /><ArtifactChart title="IC 衰减与半衰期" path={artifacts.ic_decay} kind="decay" /><ArtifactChart title="头组、等权基线与超额累计收益" path={artifacts.training_excess_returns} kind="excess" />
         <section><h3 className="mb-2 text-sm font-medium">产物文件</h3><div className="grid gap-2 md:grid-cols-2">{Object.entries(artifacts).map(([name, path]) => <div key={name} className="flex min-w-0 items-center gap-2 border-b border-border py-2 text-xs"><ExternalLink className="h-3.5 w-3.5 shrink-0" /><span className="shrink-0 text-muted-foreground">{name}</span><span className="truncate font-mono" title={String(path)}>{String(path)}</span></div>)}</div></section>
       </div></div></div>}
   </div>;
