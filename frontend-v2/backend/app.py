@@ -155,6 +155,7 @@ class EvaluationConfigUpdate(BaseModel):
     spreadThreshold: Optional[float] = None
     excessSharpeThreshold: Optional[float] = None
     groupCount: Optional[int] = None
+    rebalancePeriodDays: Optional[int] = Field(None, ge=1, le=252)
     feeThrough2023: Optional[float] = None
     feeFrom2024: Optional[float] = None
 
@@ -1991,6 +1992,7 @@ def _evaluation_config_for_frontend() -> Dict[str, Any]:
     config = _load_yaml_dict(EVALUATION_CONFIG_PATH)
     periods = config.get("periods") or {}
     metrics = config.get("metrics") or {}
+    portfolio = config.get("portfolio") or {}
     schedule = (config.get("costs") or {}).get("schedule") or []
     training = periods.get("training") or ["2023-01-01", "2025-06-30"]
     validation = periods.get("validation") or ["2025-07-01", "2025-12-31"]
@@ -2004,6 +2006,7 @@ def _evaluation_config_for_frontend() -> Dict[str, Any]:
         "spreadThreshold": metrics.get("spread_threshold", 0.30),
         "excessSharpeThreshold": metrics.get("excess_sharpe_threshold", 1.0),
         "groupCount": metrics.get("group_count", 10),
+        "rebalancePeriodDays": portfolio.get("rebalance_period_days", 3),
         "feeThrough2023": schedule[0].get("rate", 0.0007) if schedule else 0.0007,
         "feeFrom2024": schedule[1].get("rate", 0.00035) if len(schedule) > 1 else 0.00035,
         "oosStatus": periods.get("oos_status", "sealed"),
@@ -2374,6 +2377,7 @@ async def update_evaluation_config(update: EvaluationConfigUpdate):
     config = _load_yaml_dict(EVALUATION_CONFIG_PATH)
     periods = config.setdefault("periods", {})
     metrics = config.setdefault("metrics", {})
+    portfolio = config.setdefault("portfolio", {})
     costs = config.setdefault("costs", {})
     schedule = costs.setdefault("schedule", [
         {"end_date": "2023-12-31", "rate": 0.0007},
@@ -2394,6 +2398,8 @@ async def update_evaluation_config(update: EvaluationConfigUpdate):
     for api_key, yaml_key in metric_fields.items():
         if api_key in values:
             metrics[yaml_key] = values[api_key]
+    if "rebalancePeriodDays" in values:
+        portfolio["rebalance_period_days"] = values["rebalancePeriodDays"]
     if "feeThrough2023" in values:
         schedule[0]["rate"] = values["feeThrough2023"]
     if "feeFrom2024" in values:

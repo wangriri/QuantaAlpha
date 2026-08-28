@@ -25,6 +25,7 @@ export interface EvaluationMetrics {
   rank_icir_annualized_reference?: number;
   long_short_spread?: number;
   excess_sharpe?: number;
+  portfolio?: { rebalance_period_days?: number; rebalance_days?: number; return_days?: number };
   half_life?: number | null;
   valid_days?: number;
   head_group_return_gross?: number;

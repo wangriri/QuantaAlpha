@@ -63,7 +63,7 @@ type SettingsTab = 'api' | 'data' | 'params' | 'evaluation' | 'directions';
 const DEFAULT_EVALUATION_CONFIG: EvaluationConfig = {
   trainingStart: '2023-01-01', trainingEnd: '2025-06-30', validationStart: '2025-07-01', validationEnd: '2025-12-31',
   icThreshold: 0.03, icirThreshold: 0.5, spreadThreshold: 0.30, excessSharpeThreshold: 1.0,
-  groupCount: 10, feeThrough2023: 0.0007, feeFrom2024: 0.00035, oosStatus: 'sealed', engine: 'oto_single_factor_v1',
+  groupCount: 10, rebalancePeriodDays: 3, feeThrough2023: 0.0007, feeFrom2024: 0.00035, oosStatus: 'sealed', engine: 'oto_single_factor_v1',
 };
 
 const MODEL_OPTIONS = [
@@ -742,8 +742,9 @@ export const SettingsPage: React.FC = () => {
                   <div key={key}><label className="mb-2 block text-sm font-medium">{label}</label><input type="number" step={step} value={evaluationConfig[key]} onChange={(event) => updateEvaluationField(key, Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
                 ))}
               </div>
-              <div className="grid gap-4 border-y border-border py-4 md:grid-cols-3">
+              <div className="grid gap-4 border-y border-border py-4 md:grid-cols-4">
                 <div><label className="mb-2 block text-sm font-medium">分组数</label><input type="number" min={2} max={20} value={evaluationConfig.groupCount} onChange={(event) => updateEvaluationField('groupCount', Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
+                <div><label className="mb-2 block text-sm font-medium">调仓周期（日）</label><input type="number" min={1} max={252} step={1} value={evaluationConfig.rebalancePeriodDays} onChange={(event) => updateEvaluationField('rebalancePeriodDays', Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
                 <div><label className="mb-2 block text-sm font-medium">2023 及以前费率</label><input type="number" step="0.00005" value={evaluationConfig.feeThrough2023} onChange={(event) => updateEvaluationField('feeThrough2023', Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
                 <div><label className="mb-2 block text-sm font-medium">2024 起费率</label><input type="number" step="0.00005" value={evaluationConfig.feeFrom2024} onChange={(event) => updateEvaluationField('feeFrom2024', Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
               </div>
