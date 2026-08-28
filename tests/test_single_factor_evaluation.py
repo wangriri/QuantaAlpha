@@ -40,6 +40,12 @@ def make_config(tmp_path: Path) -> EvaluationConfig:
     return EvaluationConfig(raw=raw, path=tmp_path / "evaluation.yaml")
 
 
+def with_rebalance_period(config: EvaluationConfig, days: int) -> EvaluationConfig:
+    raw = deepcopy(config.raw)
+    raw["portfolio"] = {"rebalance_period_days": days}
+    return EvaluationConfig(raw=raw, path=config.path)
+
+
 def make_fixture(direction: int = 1):
     dates = pd.bdate_range("2023-01-02", "2023-01-18")
     codes = [f"{600000 + index:06d}" for index in range(20)]
@@ -147,7 +153,7 @@ class SingleFactorEvaluationTest(unittest.TestCase):
 
     def test_fee_formula_matches_oto_membership_turnover(self):
         dates, panel, factor = make_fixture(direction=1)
-        evaluator = SingleFactorEvaluator(make_config(self.tmp_path), FakeMarketData(dates, panel))
+        evaluator = SingleFactorEvaluator(with_rebalance_period(make_config(self.tmp_path), 1), FakeMarketData(dates, panel))
         normalized = evaluator._normalize_factor(factor, "fixture_factor")
         aligned = evaluator._align(normalized, panel, list(dates), "2023-01-03", "2023-01-12")
         period_panel = evaluator._period_panel(panel, "2023-01-03", "2023-01-12")
@@ -158,6 +164,39 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         self.assertTrue(np.isclose(groups.iloc[1]["G9_fee"], 0.0))
         self.assertTrue(np.isclose(excess.iloc[1]["benchmark_fee"], 0.0))
         self.assertTrue({f"G{index}" for index in range(10)}.issubset(groups.columns))
+
+    def test_rebalance_period_defaults_to_three_and_validates(self):
+        evaluator = SingleFactorEvaluator(make_config(self.tmp_path), FakeMarketData(pd.DatetimeIndex([]), pd.DataFrame()))
+        self.assertEqual(evaluator._rebalance_period_days(), 3)
+
+        bad_config = with_rebalance_period(make_config(self.tmp_path), 0)
+        bad = SingleFactorEvaluator(bad_config, FakeMarketData(pd.DatetimeIndex([]), pd.DataFrame()))
+        with self.assertRaisesRegex(ValueError, "rebalance_period_days"):
+            bad._rebalance_period_days()
+
+    def test_three_day_rebalance_keeps_holdings_but_marks_daily_returns(self):
+        dates, panel, factor = make_fixture(direction=1)
+        config = with_rebalance_period(make_config(self.tmp_path), 3)
+        evaluator = SingleFactorEvaluator(config, FakeMarketData(dates, panel))
+        normalized = evaluator._normalize_factor(factor, "fixture_factor")
+        aligned = evaluator._align(normalized, panel, list(dates), "2023-01-03", "2023-01-12")
+        period_panel = evaluator._period_panel(panel, "2023-01-03", "2023-01-12")
+
+        groups, excess = evaluator._group_returns(aligned, 1, period_panel)
+
+        self.assertEqual(groups["is_rebalance_day"].head(4).tolist(), [True, False, False, True])
+        self.assertTrue((groups.loc[groups["is_rebalance_day"] == False].filter(regex=r"^G\d+_fee$") == 0.0).all().all())
+        self.assertEqual(len(groups), period_panel["entry_date"].nunique())
+        self.assertEqual(len(excess), len(groups))
+        self.assertEqual(set(groups["rebalance_period_days"].unique()), {3})
+
+        first_day_top = aligned[aligned["entry_date"] == groups.index[0]].nlargest(2, "factor_value")["oto_return"].mean()
+        second_return_day = period_panel[
+            (period_panel["entry_date"] == groups.index[1])
+            & (period_panel["code"].isin(["600018", "600019"]))
+        ]["oto_return"].mean()
+        self.assertTrue(np.isclose(groups.iloc[0]["G9"], first_day_top))
+        self.assertTrue(np.isclose(groups.iloc[1]["G9"], second_return_day))
 
     def test_validation_degradation_uses_locked_directional_metrics(self):
         result = SingleFactorEvaluator._validation_degradation(
