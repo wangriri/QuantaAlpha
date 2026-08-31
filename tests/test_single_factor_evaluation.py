@@ -167,6 +167,26 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         self.assertTrue(np.isclose(excess.iloc[0]["benchmark_net_return"], first_day["oto_return"].mean()))
         self.assertTrue({f"G{index}" for index in range(10)}.issubset(groups.columns))
 
+    def test_benchmark_uses_raw_market_panel_not_eligible_universe(self):
+        dates, panel, factor = make_fixture(direction=1)
+        first_entry = pd.Timestamp("2023-01-03")
+        panel.loc[(panel["entry_date"] == first_entry) & (panel["code"] == "600019"), "open_limit"] = True
+        panel.loc[(panel["entry_date"] == first_entry) & (panel["code"] == "600019"), "oto_return"] = 1.0
+        evaluator = SingleFactorEvaluator(with_rebalance_period(make_config(self.tmp_path), 1), FakeMarketData(dates, panel))
+        normalized = evaluator._normalize_factor(factor, "fixture_factor")
+        eligible = evaluator._eligible_panel(panel)
+        raw_period = evaluator._period_panel(panel, "2023-01-03", "2023-01-12")
+        aligned = evaluator._align(normalized, eligible, list(dates), "2023-01-03", "2023-01-12")
+
+        _, excess = evaluator._group_returns(aligned, 1, raw_period)
+
+        self.assertFalse(
+            ((aligned["entry_date"] == first_entry) & (aligned["code"] == "600019")).any()
+        )
+        expected_benchmark = raw_period[raw_period["entry_date"] == first_entry]["oto_return"].mean()
+        self.assertTrue(np.isclose(excess.loc[first_entry, "benchmark_net_return"], expected_benchmark))
+        self.assertEqual(excess.loc[first_entry, "benchmark_fee"], 0.0)
+
     def test_rebalance_period_defaults_to_three_and_validates(self):
         evaluator = SingleFactorEvaluator(make_config(self.tmp_path), FakeMarketData(pd.DatetimeIndex([]), pd.DataFrame()))
         self.assertEqual(evaluator._rebalance_period_days(), 3)
