@@ -3,6 +3,7 @@ import { HomePage } from '@/pages/HomePage';
 import { MiningDashboardPage } from '@/pages/MiningDashboardPage';
 import { FactorLibraryPage } from '@/pages/FactorLibraryPage';
 import { BacktestPage } from '@/pages/BacktestPage';
+import { TacticalFactorPage } from '@/pages/TacticalFactorPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { TraceViewerPage } from '@/pages/TraceViewerPage';
 import { Layout } from '@/components/layout/Layout';
@@ -48,6 +49,11 @@ const AppContent: React.FC = () => {
       <div style={{ display: currentPage === 'backtest' ? 'block' : 'none' }}>
         <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
           <BacktestPage />
+        </Layout>
+      </div>
+      <div style={{ display: currentPage === 'tactical' ? 'block' : 'none' }}>
+        <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+          <TacticalFactorPage />
         </Layout>
       </div>
       <div style={{ display: currentPage === 'trace' ? 'block' : 'none' }}>

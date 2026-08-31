@@ -10,6 +10,10 @@ import type {
   Factor,
   PromptPack,
   Task,
+  TacticalAnalyzeResponse,
+  TacticalConfig,
+  TacticalGroupTestResponse,
+  TacticalGroupTestSummary,
   TraceArtifact,
   TraceDetail,
   TraceRunSummary,
@@ -211,6 +215,49 @@ export async function updateEvaluationConfig(update: Partial<EvaluationConfig>) 
 
 export async function getEvaluationArtifact(path: string) {
   return request<{ rows: Record<string, string>[]; name: string }>(`/api/v1/evaluation/artifact?path=${encodeURIComponent(path)}`);
+}
+
+// ========================== Tactical Factor API ==========================
+
+export async function getTacticalConfig() {
+  return request<{ config: TacticalConfig; defaults: TacticalConfig }>('/api/v1/tactical/config');
+}
+
+export async function updateTacticalConfig(update: Partial<TacticalConfig>) {
+  return request<{ config: TacticalConfig }>('/api/v1/tactical/config', {
+    method: 'PUT',
+    body: JSON.stringify(update),
+  });
+}
+
+export async function analyzeTacticalFactors(library: string) {
+  return request<TacticalAnalyzeResponse>('/api/v1/tactical/analyze', {
+    method: 'POST',
+    body: JSON.stringify({ library }),
+  });
+}
+
+export async function testTacticalFactorGroup(library: string, factorIds: string[], groupMetrics?: {
+  averageCorrelation?: number | null;
+  minPairCorrelation?: number | null;
+  minOverlapDays?: number | null;
+}) {
+  return request<TacticalGroupTestResponse>('/api/v1/tactical/group-test', {
+    method: 'POST',
+    body: JSON.stringify({ library, factorIds, ...groupMetrics }),
+  });
+}
+
+export async function listTacticalGroupTests(library: string) {
+  const qs = new URLSearchParams({ library });
+  return request<{ tests: TacticalGroupTestSummary[] }>(`/api/v1/tactical/group-tests?${qs.toString()}`);
+}
+
+export async function getSavedTacticalGroupTest(library: string, factorIds: string[]) {
+  return request<TacticalGroupTestResponse>('/api/v1/tactical/group-test/saved', {
+    method: 'POST',
+    body: JSON.stringify({ library, factorIds }),
+  });
 }
 
 export async function listDedupReports() {

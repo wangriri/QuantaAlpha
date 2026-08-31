@@ -2,6 +2,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+const backendTarget = process.env.VITE_BACKEND_TARGET || 'http://localhost:8000'
+const backendWsTarget = backendTarget.replace(/^http/, 'ws')
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -14,11 +17,11 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: backendTarget,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: backendWsTarget,
         ws: true,
       },
     },
