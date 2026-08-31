@@ -151,7 +151,7 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         self.assertTrue(any("negative_period" in issue for issue in bad["issues"]))
         self.assertEqual(good["status"], "passed")
 
-    def test_fee_formula_matches_oto_membership_turnover(self):
+    def test_fee_formula_matches_oto_membership_turnover_and_benchmark_is_uncosted_market_mean(self):
         dates, panel, factor = make_fixture(direction=1)
         evaluator = SingleFactorEvaluator(with_rebalance_period(make_config(self.tmp_path), 1), FakeMarketData(dates, panel))
         normalized = evaluator._normalize_factor(factor, "fixture_factor")
@@ -160,9 +160,11 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         groups, excess = evaluator._group_returns(aligned, 1, period_panel)
 
         self.assertTrue(np.isclose(groups.iloc[0]["G9_fee"], 2 * 0.0007))
-        self.assertTrue(np.isclose(excess.iloc[0]["benchmark_fee"], 2 * 0.0007))
+        self.assertTrue(np.isclose(excess.iloc[0]["benchmark_fee"], 0.0))
         self.assertTrue(np.isclose(groups.iloc[1]["G9_fee"], 0.0))
         self.assertTrue(np.isclose(excess.iloc[1]["benchmark_fee"], 0.0))
+        first_day = period_panel[period_panel["entry_date"] == excess.index[0]]
+        self.assertTrue(np.isclose(excess.iloc[0]["benchmark_net_return"], first_day["oto_return"].mean()))
         self.assertTrue({f"G{index}" for index in range(10)}.issubset(groups.columns))
 
     def test_rebalance_period_defaults_to_three_and_validates(self):

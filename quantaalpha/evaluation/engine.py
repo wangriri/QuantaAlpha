@@ -370,8 +370,6 @@ class SingleFactorEvaluator:
         rebalance_period = self._rebalance_period_days()
         current_groups: dict[int, set[str]] = {index: set() for index in range(group_count)}
         previous_groups: dict[int, set[str]] = {index: set() for index in range(group_count)}
-        previous_benchmark: set[str] = set()
-        current_benchmark: set[str] = set()
         days_since_rebalance = rebalance_period
         group_rows: list[dict[str, Any]] = []
         excess_rows: list[dict[str, Any]] = []
@@ -449,29 +447,16 @@ class SingleFactorEvaluator:
                     top_net = gross - fee
             group_rows.append(row)
 
-            benchmark_day = return_day
-            if is_rebalance_day or not current_benchmark:
-                current_benchmark = set(benchmark_day["code"].astype(str))
-            benchmark_members = current_benchmark
             benchmark_fee = 0.0
-            if is_rebalance_day:
-                denominator = max(len(benchmark_members), len(previous_benchmark))
-                benchmark_fee = (
-                    len(benchmark_members - previous_benchmark) * 2.0 * rate / denominator if denominator else 0.0
-                )
-                previous_benchmark = set(benchmark_members)
-            if not self.config.section("costs").get("charge_benchmark", True):
-                benchmark_fee = 0.0
-            benchmark_returns = benchmark_day.set_index("code")["oto_return"].reindex(sorted(benchmark_members)).dropna()
+            benchmark_returns = pd.to_numeric(return_day["oto_return"], errors="coerce").dropna()
             benchmark_gross = _finite(benchmark_returns.mean()) if not benchmark_returns.empty else None
             if top_net is not None and benchmark_gross is not None:
-                benchmark_net = benchmark_gross - benchmark_fee
                 excess_rows.append(
                     {
                         "date": pd.Timestamp(date),
                         "head_net_return": top_net,
-                        "benchmark_net_return": benchmark_net,
-                        "excess_return": top_net - benchmark_net,
+                        "benchmark_net_return": benchmark_gross,
+                        "excess_return": top_net - benchmark_gross,
                         "benchmark_fee": benchmark_fee,
                         "is_rebalance_day": is_rebalance_day,
                         "rebalance_period_days": rebalance_period,

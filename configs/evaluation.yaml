@@ -47,7 +47,6 @@ costs:
       rate: 0.0007
     - end_date: "9999-12-31"
       rate: 0.00035
-  charge_benchmark: true
 
 validation:
   run_for_training_pass_only: true
