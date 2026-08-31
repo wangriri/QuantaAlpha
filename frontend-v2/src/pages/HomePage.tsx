@@ -65,9 +65,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
             </div>
             <div className="glass rounded-2xl p-6 card-hover text-center cursor-pointer" onClick={() => onNavigate?.('backtest')}>
               <div className="text-4xl mb-3">🚀</div>
-              <h3 className="font-semibold mb-2">独立回测</h3>
+              <h3 className="font-semibold mb-2">因子评估</h3>
               <p className="text-sm text-muted-foreground">
-                选择因子库进行全周期样本外回测评估
+                逐个运行 OTO 评估并查看训练、验证和去重结果
               </p>
             </div>
           </div>
@@ -81,15 +81,15 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
               <div className="flex items-start gap-2">
                 <span className="text-primary mt-0.5">&#9679;</span>
-                <span><strong className="text-foreground">默认市场：</strong>CSI 300（沪深300）市场股票数据</span>
+                <span><strong className="text-foreground">股票池：</strong>沪深 A 股，剔除 ST、开盘涨跌停和缺失行情</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-primary mt-0.5">&#9679;</span>
-                <span><strong className="text-foreground">挖掘时间段：</strong>训练集 2016-2020，验证集 2021（初步回测在验证集上进行）</span>
+                <span><strong className="text-foreground">训练评估期：</strong>2023-01-01 至 2025-06-30</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-primary mt-0.5">&#9679;</span>
-                <span><strong className="text-foreground">独立回测：</strong>测试集 2022-01-01 ~ 2025-12-26（评估样本外表现）</span>
+                <span><strong className="text-foreground">开发验证集：</strong>2025-07-01 至 2025-12-31，仅训练通过的因子运行</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-primary mt-0.5">&#9679;</span>
@@ -97,7 +97,11 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-primary mt-0.5">&#9679;</span>
-                <span><strong className="text-foreground">基础因子：</strong>主实验中新因子与 4 个基础因子（开盘收益率、成交量比率、振幅收益率、日收益率）组合后回测</span>
+                <span><strong className="text-foreground">时间对齐：</strong>F(t-1) → open(t) → open(t+1)，严格按交易日历连接</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="text-primary mt-0.5">&#9679;</span>
+                <span><strong className="text-foreground">样本外：</strong>2026 年已封存，不读取、不计算、不传给 AI</span>
               </div>
             </div>
           </div>

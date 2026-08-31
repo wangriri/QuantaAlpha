@@ -125,7 +125,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({ onSubmit, isRunning }) =
 
                 <div>
                   <label className="mb-1 block text-xs text-muted-foreground">
-                    进化轮次
+                    总进化轮次
                   </label>
                   <input
                     type="number"

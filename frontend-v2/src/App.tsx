@@ -3,7 +3,9 @@ import { HomePage } from '@/pages/HomePage';
 import { MiningDashboardPage } from '@/pages/MiningDashboardPage';
 import { FactorLibraryPage } from '@/pages/FactorLibraryPage';
 import { BacktestPage } from '@/pages/BacktestPage';
+import { TacticalFactorPage } from '@/pages/TacticalFactorPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { TraceViewerPage } from '@/pages/TraceViewerPage';
 import { Layout } from '@/components/layout/Layout';
 import type { PageId } from '@/components/layout/Layout';
 import { ParticleBackground } from '@/components/ParticleBackground';
@@ -47,6 +49,16 @@ const AppContent: React.FC = () => {
       <div style={{ display: currentPage === 'backtest' ? 'block' : 'none' }}>
         <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
           <BacktestPage />
+        </Layout>
+      </div>
+      <div style={{ display: currentPage === 'tactical' ? 'block' : 'none' }}>
+        <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+          <TacticalFactorPage />
+        </Layout>
+      </div>
+      <div style={{ display: currentPage === 'trace' ? 'block' : 'none' }}>
+        <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+          <TraceViewerPage activeRunId={miningTask?.traceRunId || miningTask?.config?.traceRunId} />
         </Layout>
       </div>
       <div style={{ display: currentPage === 'settings' ? 'block' : 'none' }}>

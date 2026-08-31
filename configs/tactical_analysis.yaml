@@ -1,0 +1,17 @@
+enabled: true
+min_training_months: 6
+min_validation_months: 3
+min_trading_days_per_month: 10
+strong_best_month_quantile: 0.85
+burst_month_quantile: 0.8
+high_volatility_quantile: 0.75
+severe_loss_quantile: 0.15
+severe_drawdown_quantile: 0.15
+min_positive_month_ratio: 0.3
+min_burst_month_count: 1
+high_return_correlation_threshold: 0.8
+duplicate_return_correlation_threshold: 0.9989
+min_return_correlation_overlap: 20
+return_correlation_group_size: 5
+return_correlation_group_avg_threshold: 0.0
+max_return_correlation_groups: 500

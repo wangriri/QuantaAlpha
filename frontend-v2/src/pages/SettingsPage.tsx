@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { Settings, Save, RotateCcw, Eye, EyeOff, Check, X, AlertCircle, Loader2, Database, Sliders, Box, Cpu, Compass, Shuffle, Bot } from 'lucide-react';
-import { getSystemConfig, updateSystemConfig, healthCheck } from '@/services/api';
+import { Settings, Save, RotateCcw, Eye, EyeOff, Check, X, AlertCircle, Loader2, Database, Sliders, Box, Cpu, Compass, Shuffle, Bot, BarChart3 } from 'lucide-react';
+import { getSystemConfig, updateSystemConfig, healthCheck, getEvaluationConfig, updateEvaluationConfig } from '@/services/api';
+import type { EvaluationConfig } from '@/services/api';
 import { REFERENCE_MINING_DIRECTIONS, getDirectionLabel, type MiningDirectionItem } from '@/utils/miningDirections';
 import type { PromptPack } from '@/types';
 
@@ -57,7 +58,13 @@ const parseNumberField = (value: string, fallback: number) => {
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
-type SettingsTab = 'api' | 'data' | 'params' | 'directions';
+type SettingsTab = 'api' | 'data' | 'params' | 'evaluation' | 'directions';
+
+const DEFAULT_EVALUATION_CONFIG: EvaluationConfig = {
+  trainingStart: '2023-01-01', trainingEnd: '2025-06-30', validationStart: '2025-07-01', validationEnd: '2025-12-31',
+  icThreshold: 0.03, icirThreshold: 0.5, spreadThreshold: 0.30, excessSharpeThreshold: 1.0,
+  groupCount: 10, feeThrough2023: 0.0007, feeFrom2024: 0.00035, oosStatus: 'sealed', engine: 'oto_single_factor_v1',
+};
 
 const MODEL_OPTIONS = [
   {
@@ -98,6 +105,7 @@ const CUSTOM_MODEL_VALUE = '__custom_model__';
 
 export const SettingsPage: React.FC = () => {
   const [config, setConfig] = useState<SystemConfig>(DEFAULT_CONFIG);
+  const [evaluationConfig, setEvaluationConfig] = useState<EvaluationConfig>(DEFAULT_EVALUATION_CONFIG);
   const [activeTab, setActiveTab] = useState<SettingsTab>('api');
   const [showApiKey, setShowApiKey] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -162,6 +170,8 @@ export const SettingsPage: React.FC = () => {
         });
         setFactorLibraries(resp.data.factorLibraries || []);
       }
+      const evaluationResponse = await getEvaluationConfig();
+      if (evaluationResponse.data?.config) setEvaluationConfig(evaluationResponse.data.config);
     } catch (err: any) {
       console.error('Failed to load config:', err);
       // Fallback to localStorage
@@ -220,6 +230,7 @@ export const SettingsPage: React.FC = () => {
       if (Object.keys(update).length > 0) {
         await updateSystemConfig(update);
       }
+      await updateEvaluationConfig(evaluationConfig);
     } catch (err: any) {
       console.warn('Failed to save to backend, saved locally:', err);
     }
@@ -239,6 +250,11 @@ export const SettingsPage: React.FC = () => {
 
   const updateConfigField = (key: keyof SystemConfig, value: any) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
+    setIsDirty(true);
+  };
+
+  const updateEvaluationField = <K extends keyof EvaluationConfig>(key: K, value: EvaluationConfig[K]) => {
+    setEvaluationConfig((previous) => ({ ...previous, [key]: value }));
     setIsDirty(true);
   };
 
@@ -321,6 +337,7 @@ export const SettingsPage: React.FC = () => {
         <TabButton id="api" label="配置 API" icon={Cpu} />
         <TabButton id="data" label="数据路径" icon={Database} />
         <TabButton id="params" label="默认参数" icon={Sliders} />
+        <TabButton id="evaluation" label="评估规则" icon={BarChart3} />
         <TabButton id="directions" label="挖掘方向" icon={Compass} />
       </div>
 
@@ -566,7 +583,7 @@ export const SettingsPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">进化轮次</label>
+                  <label className="block text-sm font-medium mb-2">总进化轮次</label>
                   <input
                     type="number"
                     value={config.defaultMaxRounds}
@@ -576,7 +593,7 @@ export const SettingsPage: React.FC = () => {
                     className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    因子自我进化和优化的最大迭代次数 (1-20)
+                    包含 original 初始轮；例如 3 = original + mutation + crossover
                   </p>
                 </div>
 
@@ -697,6 +714,40 @@ export const SettingsPage: React.FC = () => {
                   </div>
                 </label>
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Evaluation Rules Tab */}
+        {activeTab === 'evaluation' && (
+          <Card className="glass animate-fade-in-up">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" />单因子 OTO 评估规则</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">每次运行保存完整配置快照和哈希；方向只由训练期 IC 决定。</p>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                {([
+                  ['trainingStart', '训练开始'], ['trainingEnd', '训练结束'],
+                  ['validationStart', '验证开始'], ['validationEnd', '验证结束'],
+                ] as const).map(([key, label]) => (
+                  <div key={key}><label className="mb-2 block text-sm font-medium">{label}</label><input type="date" value={evaluationConfig[key]} onChange={(event) => updateEvaluationField(key, event.target.value)} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
+                ))}
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                {([
+                  ['icThreshold', '绝对 IC 门槛', 0.001], ['icirThreshold', 'ICIR 门槛', 0.05],
+                  ['spreadThreshold', '收益差门槛', 0.01], ['excessSharpeThreshold', '超额 Sharpe 门槛', 0.1],
+                ] as const).map(([key, label, step]) => (
+                  <div key={key}><label className="mb-2 block text-sm font-medium">{label}</label><input type="number" step={step} value={evaluationConfig[key]} onChange={(event) => updateEvaluationField(key, Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
+                ))}
+              </div>
+              <div className="grid gap-4 border-y border-border py-4 md:grid-cols-3">
+                <div><label className="mb-2 block text-sm font-medium">分组数</label><input type="number" min={2} max={20} value={evaluationConfig.groupCount} onChange={(event) => updateEvaluationField('groupCount', Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
+                <div><label className="mb-2 block text-sm font-medium">2023 及以前费率</label><input type="number" step="0.00005" value={evaluationConfig.feeThrough2023} onChange={(event) => updateEvaluationField('feeThrough2023', Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
+                <div><label className="mb-2 block text-sm font-medium">2024 起费率</label><input type="number" step="0.00005" value={evaluationConfig.feeFrom2024} onChange={(event) => updateEvaluationField('feeFrom2024', Number(event.target.value))} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm" /></div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 text-sm"><span><span className="text-muted-foreground">引擎：</span>{evaluationConfig.engine}</span><Badge variant="outline">2026 样本外：{evaluationConfig.oosStatus === 'sealed' ? '已封存' : evaluationConfig.oosStatus}</Badge></div>
             </CardContent>
           </Card>
         )}

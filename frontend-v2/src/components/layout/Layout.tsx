@@ -1,8 +1,8 @@
 import React from 'react';
-import { Sparkles, Database, BarChart3, Settings as SettingsIcon } from 'lucide-react';
+import { Sparkles, Database, BarChart3, Settings as SettingsIcon, Workflow, Flame } from 'lucide-react';
 import { useTaskContext } from '@/context/TaskContext';
 
-export type PageId = 'home' | 'library' | 'backtest' | 'settings' | 'mining_dashboard';
+export type PageId = 'home' | 'library' | 'backtest' | 'tactical' | 'trace' | 'settings' | 'mining_dashboard';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -37,7 +37,9 @@ export const Layout: React.FC<LayoutProps> = ({
   const navItems = [
     { id: 'home' as const, label: '因子挖掘', icon: Sparkles },
     { id: 'library' as const, label: '因子库', icon: Database },
-    { id: 'backtest' as const, label: '回测', icon: BarChart3 },
+    { id: 'backtest' as const, label: '因子评估', icon: BarChart3 },
+    { id: 'tactical' as const, label: '战术因子', icon: Flame },
+    { id: 'trace' as const, label: '挖掘过程', icon: Workflow },
     { id: 'settings' as const, label: '设置', icon: SettingsIcon },
   ];
 
