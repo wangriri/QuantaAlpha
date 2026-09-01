@@ -118,8 +118,10 @@ export async function getFactors(params: FactorListParams = {}) {
   return request<FactorListResponse>(`/api/v1/factors?${qs.toString()}`);
 }
 
-export async function getFactorDetail(factorId: string) {
-  return request<{ factor: any }>(`/api/v1/factors/${factorId}`);
+export async function getFactorDetail(factorId: string, library?: string) {
+  const qs = new URLSearchParams();
+  if (library) qs.set('library', library);
+  return request<{ factor: any }>(`/api/v1/factors/${factorId}${qs.toString() ? `?${qs.toString()}` : ''}`);
 }
 
 export async function listFactorLibraries() {

@@ -389,6 +389,8 @@ class SingleFactorEvaluator:
             return_day = benchmark_by_date.get(pd.Timestamp(date))
             if return_day is None:
                 return_day = selection_day[["code", "oto_return"]].dropna()
+            benchmark_returns = pd.to_numeric(return_day["oto_return"], errors="coerce").dropna()
+            benchmark_gross = _finite(benchmark_returns.mean()) if not benchmark_returns.empty else None
             rate = self._fee_rate(pd.Timestamp(date))
             should_rebalance = days_since_rebalance >= rebalance_period or not any(current_groups.values())
             is_rebalance_day = False
@@ -424,6 +426,18 @@ class SingleFactorEvaluator:
                     rebalance_skipped = True
 
             if not any(current_groups.values()):
+                if benchmark_gross is not None:
+                    excess_rows.append(
+                        {
+                            "date": pd.Timestamp(date),
+                            "head_net_return": None,
+                            "benchmark_net_return": benchmark_gross,
+                            "excess_return": None,
+                            "benchmark_fee": 0.0,
+                            "is_rebalance_day": False,
+                            "rebalance_period_days": rebalance_period,
+                        }
+                    )
                 continue
             if not is_rebalance_day:
                 days_since_rebalance += 1
@@ -449,15 +463,13 @@ class SingleFactorEvaluator:
             group_rows.append(row)
 
             benchmark_fee = 0.0
-            benchmark_returns = pd.to_numeric(return_day["oto_return"], errors="coerce").dropna()
-            benchmark_gross = _finite(benchmark_returns.mean()) if not benchmark_returns.empty else None
-            if top_net is not None and benchmark_gross is not None:
+            if benchmark_gross is not None:
                 excess_rows.append(
                     {
                         "date": pd.Timestamp(date),
                         "head_net_return": top_net,
                         "benchmark_net_return": benchmark_gross,
-                        "excess_return": top_net - benchmark_gross,
+                        "excess_return": top_net - benchmark_gross if top_net is not None else None,
                         "benchmark_fee": benchmark_fee,
                         "is_rebalance_day": is_rebalance_day,
                         "rebalance_period_days": rebalance_period,

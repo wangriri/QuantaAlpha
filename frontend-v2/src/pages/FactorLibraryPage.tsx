@@ -70,7 +70,7 @@ export const FactorLibraryPage: React.FC = () => {
   }), [factors, filter, search]);
 
   const select = async (factor: Factor) => {
-    try { const response = await getFactorDetail(factor.factorId); setSelected({ ...factor, ...(response.data?.factor || {}) }); }
+    try { const response = await getFactorDetail(factor.factorId, library || undefined); setSelected({ ...factor, ...(response.data?.factor || {}) }); }
     catch { setSelected(factor); }
   };
   const exportLibrary = () => {

@@ -1515,9 +1515,12 @@ async def list_factor_libraries():
 
 
 @app.get("/api/v1/factors/{factor_id}", response_model=ApiResponse)
-async def get_factor_detail(factor_id: str):
+async def get_factor_detail(
+    factor_id: str,
+    library: Optional[str] = Query(None, description="Factor library JSON filename"),
+):
     """Get full detail of a single factor."""
-    jsons = _find_factor_jsons()
+    jsons = [_resolve_factor_library(library)] if library else _find_factor_jsons()
     for lib_path in jsons:
         try:
             raw = _load_factor_library(lib_path)

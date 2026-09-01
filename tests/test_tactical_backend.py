@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 from pathlib import Path
@@ -100,6 +101,22 @@ class TacticalBackendTest(unittest.TestCase):
         self.assertIn("training_excess", by_id["factor_a"])
         self.assertIn("skipReason", by_id["factor_b"])
         self.assertEqual(by_id["factor_c"]["skipReason"], "缺少训练期超额收益产物")
+
+    def test_factor_detail_uses_selected_library(self):
+        factorlib = self.root / "data" / "factorlib"
+        factorlib.mkdir(parents=True)
+        first = factorlib / "all_factors_library_first.json"
+        second = factorlib / "all_factors_library_second.json"
+        first.write_text(json.dumps({"factors": {"shared": {"factor_name": "old", "evaluation_v2": {"artifacts": {"training_excess_returns": "old.csv"}}}}}), encoding="utf-8")
+        second.write_text(json.dumps({"factors": {"shared": {"factor_name": "selected", "evaluation_v2": {"artifacts": {"training_excess_returns": "selected.csv"}}}}}), encoding="utf-8")
+
+        response = asyncio.run(self.app.get_factor_detail("shared", library=second.name))
+
+        self.assertEqual(response.data["factor"]["factor_name"], "selected")
+        self.assertEqual(
+            response.data["factor"]["evaluation_v2"]["artifacts"]["training_excess_returns"],
+            "selected.csv",
+        )
 
     def test_tactical_group_test_save_and_read_uses_stable_factor_set_key(self):
         result = {
