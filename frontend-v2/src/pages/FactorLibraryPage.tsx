@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Check, Code, Database, Download, ExternalLink, RefreshCw, Search, ShieldCheck, X } from 'lucide-react';
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -26,6 +26,16 @@ const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'grou
   if (!path) return null;
   const xKey = kind === 'decay' ? 'lag' : 'date';
   const keys = kind === 'groups' ? ['G0', 'G9', 'long_short_half'] : kind === 'excess' ? ['head_net_return', 'benchmark_net_return', 'excess_return'] : kind === 'decay' ? ['ic', 'rank_ic'] : ['ic', 'rank_ic'];
+  const names: Record<string, string> = {
+    G0: 'G0',
+    G9: 'G9',
+    long_short_half: '(G9-G0)/2',
+    head_net_return: '头组累计',
+    benchmark_net_return: '基准累计',
+    excess_return: '超额累计',
+    ic: 'IC',
+    rank_ic: 'Rank IC',
+  };
   const colors = ['#22c55e', '#ef4444', '#3b82f6'];
   const chartRows = kind === 'groups' ? rows.map((row) => ({
     ...row,
@@ -38,7 +48,7 @@ const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'grou
     });
     return out;
   }, []) : rows;
-  return <div className="border-t border-border pt-4"><h4 className="mb-3 text-sm font-medium">{title}</h4>{chartRows.length ? <div className="h-56"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><XAxis dataKey={xKey} tick={{ fontSize: 10 }} minTickGap={40} /><YAxis tick={{ fontSize: 10 }} width={48} /><Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', fontSize: 12 }} />{keys.map((key, index) => <Line key={key} type="monotone" dataKey={key} dot={false} stroke={colors[index]} strokeWidth={1.5} connectNulls />)}</LineChart></ResponsiveContainer></div> : <p className="text-sm text-muted-foreground">产物暂无可读数据</p>}</div>;
+  return <div className="border-t border-border pt-4"><h4 className="mb-3 text-sm font-medium">{title}</h4>{chartRows.length ? <div className="h-56"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><XAxis dataKey={xKey} tick={{ fontSize: 10 }} minTickGap={40} /><YAxis tick={{ fontSize: 10 }} width={48} domain={kind === 'excess' ? [-1, 1] : undefined} allowDataOverflow={kind === 'excess'} /><Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', fontSize: 12 }} /><Legend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 12 }} />{keys.map((key, index) => <Line key={key} type="monotone" dataKey={key} name={names[key] || key} dot={false} stroke={colors[index]} strokeWidth={1.5} connectNulls />)}</LineChart></ResponsiveContainer></div> : <p className="text-sm text-muted-foreground">产物暂无可读数据</p>}</div>;
 };
 
 export const FactorLibraryPage: React.FC = () => {
