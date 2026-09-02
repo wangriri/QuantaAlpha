@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -14,6 +16,7 @@ from quantaalpha.evaluation.service import (
     ConcurrentLibraryUpdateError,
     FactorLibraryEvaluationService,
     _atomic_json_write,
+    _stage_source_data,
 )
 
 
@@ -37,6 +40,36 @@ class _Evaluator:
 class _Auditor:
     def audit(self, **_kwargs):
         return {"status": "passed"}
+
+
+class _RecordingAuditor:
+    def __init__(self):
+        self.calls = []
+
+    def audit(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"status": "passed"}
+
+
+class _ExpressionCalculator:
+    def __init__(self, *args, **kwargs):
+        dates = pd.bdate_range("2023-01-02", periods=4)
+        instruments = ["sh600000", "sh600001"]
+        index = pd.MultiIndex.from_product([dates, instruments], names=["datetime", "instrument"])
+        self.data_df = pd.DataFrame(
+            {
+                "$open": range(len(index)),
+                "$high": range(len(index)),
+                "$low": range(len(index)),
+                "$close": range(len(index)),
+                "$volume": range(len(index)),
+                "$vwap": range(len(index)),
+            },
+            index=index,
+        )
+
+    def calculate_factor(self, factor_name, factor_expression):
+        return pd.Series(range(len(self.data_df)), index=self.data_df.index, name=factor_name)
 
 
 def _config(root: Path) -> EvaluationConfig:
@@ -74,6 +107,60 @@ class EvaluationServicesTest(unittest.TestCase):
         self.assertEqual(saved["qlib_legacy"]["IC"], 0.123)
         self.assertEqual(saved["evaluation_v2"]["status"], "passed")
         self.assertTrue(saved["lifecycle"]["active"])
+
+    def test_expression_fallback_generates_h5_when_cache_missing(self):
+        library_path = self.root / "library.json"
+        library_path.write_text(json.dumps({"metadata": {}, "factors": {"id": {
+            "factor_name": "factor", "factor_expression": "TS_MEAN($close, 5)",
+        }}}), encoding="utf-8")
+
+        service = FactorLibraryEvaluationService(_config(self.root))
+        service.evaluator = _Evaluator()
+        recorder = _RecordingAuditor()
+        service.auditor = recorder
+        with patch("quantaalpha.backtest.custom_factor_calculator.CustomFactorCalculator", _ExpressionCalculator):
+            summary = service.evaluate_library(library_path, mode="all")
+
+        saved = json.loads(library_path.read_text(encoding="utf-8"))["factors"]["id"]
+        h5_path = Path(saved["cache_location"]["result_h5_path"])
+        workspace = h5_path.parent
+        self.assertEqual(summary["passed"], 1)
+        self.assertTrue(h5_path.exists())
+        self.assertTrue((workspace / "daily_pv.h5").exists())
+        self.assertTrue((workspace / "factor.py").exists())
+        self.assertEqual(saved["cache_location"]["generated_by"], "evaluation_v2_expression_fallback")
+        self.assertEqual(saved["evaluation_v2"]["status"], "passed")
+        self.assertEqual(Path(recorder.calls[0]["workspace_path"]), workspace)
+        self.assertEqual(Path(recorder.calls[0]["source_data_path"]), workspace / "daily_pv.h5")
+
+    def test_stage_source_data_symlinks_compatible_canonical_daily_pv(self):
+        source_dir = self.root / "source"
+        source_dir.mkdir()
+        canonical = source_dir / "daily_pv.h5"
+        index = pd.MultiIndex.from_product(
+            [[pd.Timestamp("2023-01-03")], ["sh600000"]], names=["datetime", "instrument"]
+        )
+        pd.DataFrame({"$close": [1.0], "$volume": [10.0]}, index=index).to_hdf(canonical, key="data")
+        fallback = pd.DataFrame({"$close": [2.0], "$volume": [20.0]}, index=index)
+        workspace = self.root / "workspace"
+        workspace.mkdir()
+
+        with patch.dict(os.environ, {"FACTOR_CoSTEER_DATA_FOLDER": str(source_dir)}):
+            staged = _stage_source_data(workspace, "TS_MEAN($close, 5)", fallback)
+
+        self.assertTrue(staged.is_symlink())
+        self.assertEqual(staged.resolve(), canonical.resolve())
+
+    def test_unevaluated_mode_retries_retryable_data_errors(self):
+        factors = {
+            "new": {},
+            "retry": {"evaluation_v2": {"status": "data_error", "error": {"retryable": True}}},
+            "hard_error": {"evaluation_v2": {"status": "data_error", "error": {"retryable": False}}},
+            "failed": {"evaluation_v2": {"status": "failed"}},
+            "passed": {"evaluation_v2": {"status": "passed"}},
+        }
+        selected = FactorLibraryEvaluationService._select_factors(factors, "unevaluated", None)
+        self.assertEqual(selected, ["new", "retry"])
 
     def test_atomic_write_detects_concurrent_update(self):
         path = self.root / "library.json"
