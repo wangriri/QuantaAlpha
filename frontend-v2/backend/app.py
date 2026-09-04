@@ -917,12 +917,17 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         })
 
         # Launch subprocess
+        process_options: Dict[str, Any] = {}
+        if hasattr(os, "setsid"):
+            process_options["preexec_fn"] = os.setsid
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(PROJECT_ROOT),
             env=env,
+            **process_options,
         )
         task["pid"] = proc.pid
 
@@ -1052,7 +1057,10 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         exit_code = await proc.wait()
         task["pid"] = None
 
-        if exit_code == 0:
+        if task.get("status") == "cancelled":
+            task["progress"]["phase"] = "cancelled"
+            task["progress"]["message"] = "实验已停止"
+        elif exit_code == 0:
             task["status"] = "completed"
             task["progress"]["phase"] = "completed"
             task["progress"]["progress"] = 100
@@ -1154,11 +1162,19 @@ async def cancel_mining(task_id: str):
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     task = tasks[task_id]
+    task["status"] = "cancelled"
+    task["progress"]["phase"] = "cancelled"
+    task["progress"]["message"] = "正在停止任务..."
+    task["updatedAt"] = _now()
     if task.get("pid"):
         try:
             pid = task["pid"]
+            pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
             # Try graceful termination first
-            os.kill(pid, signal.SIGTERM)
+            if pgid and hasattr(os, "killpg"):
+                os.killpg(pgid, signal.SIGTERM)
+            else:
+                os.kill(pid, signal.SIGTERM)
             
             # Wait briefly for cleanup (0.5s)
             for _ in range(5):
@@ -1171,12 +1187,16 @@ async def cancel_mining(task_id: str):
             # Force kill if still running
             try:
                 os.kill(pid, 0)
-                os.kill(pid, signal.SIGKILL)
+                if pgid and hasattr(os, "killpg"):
+                    os.killpg(pgid, signal.SIGKILL)
+                else:
+                    os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
         except ProcessLookupError:
             pass
-    task["status"] = "cancelled"
+    task["pid"] = None
+    task["progress"]["message"] = "任务已停止"
     task["updatedAt"] = _now()
     await _broadcast(task_id, {
         "type": "result",

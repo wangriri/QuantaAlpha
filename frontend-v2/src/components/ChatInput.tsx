@@ -181,10 +181,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
                   {isRunning && onStop ? (
                     <button
                       onClick={onStop}
-                      className="p-2.5 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-all hover:scale-105 active:scale-95"
+                      className="flex h-10 items-center gap-2 rounded-lg bg-red-500 px-3 text-sm font-medium text-white transition-all hover:scale-105 hover:bg-red-600 active:scale-95"
                       title="中断实验"
                     >
                       <Square className="h-5 w-5" />
+                      停止
                     </button>
                   ) : (
                     <button
