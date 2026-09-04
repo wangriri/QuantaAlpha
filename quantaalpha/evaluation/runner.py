@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import traceback
 from typing import Any
 
 import pandas as pd
@@ -69,7 +70,8 @@ class OTOSingleFactorRunner(CachedRunner[QlibFactorExperiment]):
                     f"IC={evaluation.training.get('ic')}, Sharpe={evaluation.training.get('excess_sharpe')}"
                 )
             except Exception as exc:
-                logger.exception(f"OTO evaluation failed for {factor_name}: {exc}")
+                logger.error(f"OTO evaluation failed for {factor_name}: {exc}")
+                logger.error(traceback.format_exc())
                 results[factor_name] = self._error_result(factor_id, factor_name, str(exc))
 
         primary = self._select_primary(results)
@@ -118,4 +120,3 @@ class OTOSingleFactorRunner(CachedRunner[QlibFactorExperiment]):
             "oos_status": "sealed",
             "error": {"type": "EvaluationError", "message": message, "retryable": False},
         }
-

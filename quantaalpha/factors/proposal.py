@@ -20,6 +20,22 @@ from quantaalpha.prompting import resolve_factor_prompts_path
 
 DEFAULT_HISTORY_LIMIT = 6
 MIN_HISTORY_LIMIT = 1
+DEFAULT_MAX_JSON_CONVERSION_ATTEMPTS = 3
+
+
+def get_max_json_conversion_attempts() -> int:
+    """Return a bounded retry count for factor JSON/expression generation."""
+    raw_value = os.getenv("QUANTAALPHA_FACTOR_JSON_MAX_ATTEMPTS")
+    if raw_value is None:
+        return DEFAULT_MAX_JSON_CONVERSION_ATTEMPTS
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        logger.warning(
+            "Invalid QUANTAALPHA_FACTOR_JSON_MAX_ATTEMPTS="
+            f"{raw_value!r}; using {DEFAULT_MAX_JSON_CONVERSION_ATTEMPTS}."
+        )
+        return DEFAULT_MAX_JSON_CONVERSION_ATTEMPTS
 
 
 def render_hypothesis_and_feedback(prompt_dict, trace: Trace, history_limit: int = DEFAULT_HISTORY_LIMIT) -> str:
@@ -275,7 +291,12 @@ class AlphaAgentHypothesisGen(FactorHypothesisGen):
                     )
                 )
 
-                resp = APIBackend().build_messages_and_create_chat_completion(user_prompt, system_prompt, json_mode=json_flag)
+                resp = APIBackend().build_messages_and_create_chat_completion(
+                    user_prompt,
+                    system_prompt,
+                    json_mode=json_flag,
+                    reasoning_flag=False,
+                )
                 hypothesis = self.convert_response(resp)
                 self.last_generation_trace = {
                     "ok": True,
@@ -323,7 +344,12 @@ class AlphaAgentHypothesisGen(FactorHypothesisGen):
                 round=len(trace.hist)
             )
         )
-        resp = APIBackend().build_messages_and_create_chat_completion(user_prompt, system_prompt, json_mode=json_flag)
+        resp = APIBackend().build_messages_and_create_chat_completion(
+            user_prompt,
+            system_prompt,
+            json_mode=json_flag,
+            reasoning_flag=False,
+        )
         hypothesis = self.convert_response(resp)
         self.last_generation_trace = {
             "ok": True,
@@ -469,14 +495,23 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
         attempts = []
         final_response = ""
         final_response_dict = None
-        while True:
+        max_json_attempts = get_max_json_conversion_attempts()
+        llm_attempts = 0
+        while llm_attempts < max_json_attempts:
             if flag:
                 break
-                
-            resp = APIBackend().build_messages_and_create_chat_completion(user_prompt, system_prompt, json_mode=json_flag)
+
+            llm_attempts += 1
+            resp = APIBackend().build_messages_and_create_chat_completion(
+                user_prompt,
+                system_prompt,
+                json_mode=json_flag,
+                reasoning_flag=False,
+            )
             final_response = resp
             attempt_record = {
                 "attempt_index": len(attempts),
+                "llm_attempt_index": llm_attempts - 1,
                 "raw": {
                     "system_prompt": system_prompt,
                     "user_prompt": user_prompt,
@@ -502,7 +537,10 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
             except json.JSONDecodeError as e:
                 attempt_record["error"] = str(e)
                 attempts.append(copy.deepcopy(attempt_record))
-                logger.warning(f"JSON parse failed: {e}, retrying...")
+                logger.warning(
+                    f"JSON parse failed: {e}, retrying "
+                    f"({llm_attempts}/{max_json_attempts})..."
+                )
                 continue
             proposed_names = []
             proposed_exprs = []
@@ -644,6 +682,28 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                     else:
                         continue
         
+        if not flag:
+            self.last_conversion_trace = {
+                "ok": False,
+                "raw": {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "response_text": final_response,
+                    "variables": {"history_limit": history_limit},
+                },
+                "parsed": {"ok": bool(final_response_dict), "data": final_response_dict},
+                "parser": {
+                    "attempt_count": len(attempts),
+                    "llm_attempt_count": llm_attempts,
+                    "warnings": ["max_json_conversion_attempts_exceeded"],
+                },
+                "attempts": attempts,
+                "error": (
+                    "Failed to generate valid factor JSON/expression after "
+                    f"{llm_attempts} LLM attempts."
+                ),
+            }
+            raise RuntimeError(self.last_conversion_trace["error"])
 
         # Add valid factors to the factor regulator
         self.factor_regulator.add_factor(proposed_names, proposed_exprs)
@@ -657,7 +717,7 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                 "variables": {"history_limit": history_limit},
             },
             "parsed": {"ok": True, "data": final_response_dict},
-            "parser": {"attempt_count": len(attempts), "warnings": []},
+            "parser": {"attempt_count": len(attempts), "llm_attempt_count": llm_attempts, "warnings": []},
             "attempts": attempts,
         }
         return exp

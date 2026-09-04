@@ -898,7 +898,8 @@ class APIBackend:
                 # Extract JSON part
                 json_start = resp.find('{')
                 json_end = resp.rfind('}') + 1
-                resp = resp[json_start:json_end]
+                if json_start >= 0 and json_end > json_start:
+                    resp = resp[json_start:json_end]
                 # Try parse JSON; on failure try to fix
                 try:
                     json.loads(resp)
