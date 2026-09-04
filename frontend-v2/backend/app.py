@@ -794,9 +794,12 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         dotenv = _load_dotenv_dict()
         env.update(dotenv)
         venv_bin = PROJECT_ROOT / ".venv" / "bin"
-        env.setdefault("VIRTUAL_ENV", str(PROJECT_ROOT / ".venv"))
+        if not venv_bin.exists():
+            venv_bin = Path(sys.executable).parent
+        env.setdefault("VIRTUAL_ENV", str(Path(sys.executable).parents[1]))
         env.setdefault("CONDA_DEFAULT_ENV", env.get("CONDA_ENV_NAME", "quantaalpha"))
         env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+        env["FACTOR_CoSTEER_PYTHON_BIN"] = str(Path(sys.executable))
 
         # Use experiment_id as suffix to guarantee isolation
         experiment_id = f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
