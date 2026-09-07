@@ -29,6 +29,7 @@ class LLMSettings(ExtendedBaseSettings):
     openai_base_url: str = ""
     chat_openai_api_key: str = ""
     chat_model: str = "gpt-4-turbo"
+    chat_fallback_model: str = ""
     reasoning_model: str = ""
     chat_max_tokens: int = 3000
     chat_temperature: float = 0.5

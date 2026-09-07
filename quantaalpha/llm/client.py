@@ -857,43 +857,84 @@ class APIBackend:
                         if message["role"] == "system":
                             break
                 kwargs["response_format"] = {"type": "json_object"}
-            response = self.chat_client.chat.completions.create(**kwargs)
+            def collect_response(call_kwargs: dict) -> tuple[str, str | None, Any]:
+                response = self.chat_client.chat.completions.create(**call_kwargs)
+                call_finish_reason = None
+                if call_kwargs.get("stream"):
+                    text = ""
+                    chunk_count = 0
+                    content_chunk_count = 0
+                    for chunk in response:
+                        chunk_count += 1
+                        if len(chunk.choices) > 0:
+                            content = chunk.choices[0].delta.content
+                            if content is not None:
+                                content_chunk_count += 1
+                                text += content
+                            if chunk.choices[0].finish_reason is not None:
+                                call_finish_reason = chunk.choices[0].finish_reason
+                    if LLM_SETTINGS.log_llm_chat_content:
+                        display_resp = text[:200] + f"... [{len(text)} chars]" if len(text) > 200 else text
+                        logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
+                    if not text.strip():
+                        logger.warning(
+                            "LLM returned empty streamed content "
+                            f"(model={call_kwargs.get('model')}, finish_reason={call_finish_reason}, "
+                            f"chunks={chunk_count}, content_chunks={content_chunk_count})"
+                        )
+                    return text, call_finish_reason, None
 
-            
-            if self.chat_stream:
-                resp = ""
-                for chunk in response:
-                    content = (
-                        chunk.choices[0].delta.content
-                        if len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None
-                        else ""
-                    )
-                    resp += content
-                    if len(chunk.choices) > 0 and chunk.choices[0].finish_reason is not None:
-                        finish_reason = chunk.choices[0].finish_reason
-
+                text = response.choices[0].message.content or ""
+                call_finish_reason = response.choices[0].finish_reason
                 if LLM_SETTINGS.log_llm_chat_content:
-                    display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
+                    display_resp = text[:200] + f"... [{len(text)} chars]" if len(text) > 200 else text
                     logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
-
-            else:
-                resp = response.choices[0].message.content
-                finish_reason = response.choices[0].finish_reason
-                if LLM_SETTINGS.log_llm_chat_content:
-                    display_resp = resp[:200] + f"... [{len(resp)} chars]" if len(resp) > 200 else resp
-                    logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
-                    logger.info(
-                        json.dumps(
-                            {
-                                "tag": tag,
-                                "total_tokens": response.usage.total_tokens,
-                                "prompt_tokens": response.usage.prompt_tokens,
-                                "completion_tokens": response.usage.completion_tokens,
-                                "model": model,
-                            }
-                        ),
-                        tag="llm_messages",
+                    usage = response.usage
+                    if usage is not None:
+                        logger.info(
+                            json.dumps(
+                                {
+                                    "tag": tag,
+                                    "total_tokens": usage.total_tokens,
+                                    "prompt_tokens": usage.prompt_tokens,
+                                    "completion_tokens": usage.completion_tokens,
+                                    "model": call_kwargs.get("model"),
+                                }
+                            ),
+                            tag="llm_messages",
+                        )
+                if not text.strip():
+                    logger.warning(
+                        "LLM returned empty content "
+                        f"(model={call_kwargs.get('model')}, finish_reason={call_finish_reason})"
                     )
+                return text, call_finish_reason, response
+
+            resp, finish_reason, _ = collect_response(kwargs)
+
+            if not resp.strip() and not reasoning_flag:
+                fallback_model = LLM_SETTINGS.chat_fallback_model.strip()
+                if (
+                    not fallback_model
+                    and "deepseek" in (self.base_url or "").lower()
+                    and model == "deepseek-v4-flash"
+                ):
+                    fallback_model = "deepseek-chat"
+
+                if fallback_model and fallback_model != model:
+                    fallback_kwargs = dict(kwargs)
+                    fallback_kwargs["model"] = fallback_model
+                    fallback_kwargs["stream"] = False
+                    logger.warning(
+                        "Retrying empty LLM response with fallback model "
+                        f"{fallback_model} (original_model={model}, finish_reason={finish_reason})"
+                    )
+                    resp, finish_reason, _ = collect_response(fallback_kwargs)
+
+            if not resp.strip():
+                raise RuntimeError(
+                    f"LLM returned empty response (model={model}, finish_reason={finish_reason})"
+                )
             if json_mode or reasoning_flag:
                 # Extract JSON part
                 json_start = resp.find('{')
@@ -924,7 +965,7 @@ class APIBackend:
                         logger.info("Fixed JSON format issues")
                     except json.JSONDecodeError as e2:
                         logger.warning(f"JSON fix failed: {e2}, using raw response")
-        if self.dump_chat_cache:
+        if self.dump_chat_cache and resp.strip():
             self.cache.chat_set(input_content_json, resp)
         return resp, finish_reason
 
