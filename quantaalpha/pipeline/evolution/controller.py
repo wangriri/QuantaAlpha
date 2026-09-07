@@ -65,6 +65,9 @@ class EvolutionConfig:
     # Start with empty trajectory pool (ignore existing data)
     fresh_start: bool = True
 
+    # Maximum failures for the same phase/round/direction before skipping it
+    max_task_failures: int = 2
+
 
 class EvolutionController:
     """
@@ -118,6 +121,8 @@ class EvolutionController:
         # Track trajectories to mutate in current mutation round
         self._mutation_targets: list[StrategyTrajectory] = []
         self._mutation_idx = 0  # Current index in mutation targets
+        self._failed_task_counts: dict[tuple[str, int, int], int] = {}
+        self._skipped_task_keys: set[tuple[str, int, int]] = set()
     
     def get_current_state(self) -> dict[str, Any]:
         """Get current evolution state."""
@@ -128,8 +133,32 @@ class EvolutionController:
             "active_branch_count": self._active_branch_count,
             "mutation_targets_remaining": len(self._mutation_targets) - self._mutation_idx if self._mutation_targets else 0,
             "crossover_groups_remaining": len(self._crossover_groups) - self._crossover_idx,
+            "failed_task_counts": {self._format_task_key(key): value for key, value in self._failed_task_counts.items()},
+            "skipped_task_count": len(self._skipped_task_keys),
             "pool_stats": self.pool.get_statistics(),
         }
+
+    @staticmethod
+    def _task_key(task: dict[str, Any]) -> tuple[str, int, int]:
+        phase = task["phase"].value if hasattr(task["phase"], "value") else str(task["phase"])
+        return (phase, int(task["round_idx"]), int(task["direction_id"]))
+
+    @staticmethod
+    def _format_task_key(key: tuple[str, int, int]) -> str:
+        phase, round_idx, direction_id = key
+        return f"{phase}:round={round_idx}:direction={direction_id}"
+
+    @staticmethod
+    def _parse_task_key(value: str) -> tuple[str, int, int]:
+        phase, round_part, direction_part = value.split(":")
+        return (
+            phase,
+            int(round_part.split("=", 1)[1]),
+            int(direction_part.split("=", 1)[1]),
+        )
+
+    def _is_task_skipped(self, task: dict[str, Any]) -> bool:
+        return self._task_key(task) in self._skipped_task_keys
 
     def _max_rounds_reached(self) -> bool:
         """Return True when no new round is allowed to start."""
@@ -187,14 +216,15 @@ class EvolutionController:
         # Phase: ORIGINAL - collect all remaining original tasks
         if self._current_phase == RoundPhase.ORIGINAL:
             for d in range(self.config.num_directions):
-                if d not in self._directions_completed:
-                    tasks.append({
-                        "phase": RoundPhase.ORIGINAL,
-                        "direction_id": d,
-                        "parent_trajectories": [],
-                        "strategy_suffix": "",
-                        "round_idx": self._current_round,
-                    })
+                task = {
+                    "phase": RoundPhase.ORIGINAL,
+                    "direction_id": d,
+                    "parent_trajectories": [],
+                    "strategy_suffix": "",
+                    "round_idx": self._current_round,
+                }
+                if d not in self._directions_completed and not self._is_task_skipped(task):
+                    tasks.append(task)
             
             # If no tasks, transition phase for next call
             if not tasks:
@@ -237,14 +267,16 @@ class EvolutionController:
                     continue
                 
                 suffix = self.mutation_op.generate_mutation_prompt_suffix(parent)
-                tasks.append({
+                task = {
                     "phase": RoundPhase.MUTATION,
                     "direction_id": idx,
                     "parent_trajectories": [parent],
                     "strategy_suffix": suffix,
                     "mutation_trace": getattr(self.mutation_op, "last_generation_trace", {}),
                     "round_idx": self._current_round,
-                })
+                }
+                if not self._is_task_skipped(task):
+                    tasks.append(task)
             
             # If no tasks, transition phase for next call
             if not tasks:
@@ -273,14 +305,16 @@ class EvolutionController:
             for idx in range(self._crossover_idx, len(self._crossover_groups)):
                 parents = self._crossover_groups[idx]
                 suffix = self.crossover_op.generate_crossover_prompt_suffix(parents)
-                tasks.append({
+                task = {
                     "phase": RoundPhase.CROSSOVER,
                     "direction_id": idx,
                     "parent_trajectories": parents,
                     "strategy_suffix": suffix,
                     "crossover_trace": getattr(self.crossover_op, "last_generation_trace", {}),
                     "round_idx": self._current_round,
-                })
+                }
+                if not self._is_task_skipped(task):
+                    tasks.append(task)
             
             # If no tasks, transition phase for next call
             if not tasks:
@@ -371,14 +405,15 @@ class EvolutionController:
         """Get next original round task."""
         # Find a direction that hasn't completed original
         for d in range(self.config.num_directions):
-            if d not in self._directions_completed:
-                return {
-                    "phase": RoundPhase.ORIGINAL,
-                    "direction_id": d,
-                    "parent_trajectories": [],
-                    "strategy_suffix": "",  # No guidance for original
-                    "round_idx": self._current_round,
-                }
+            task = {
+                "phase": RoundPhase.ORIGINAL,
+                "direction_id": d,
+                "parent_trajectories": [],
+                "strategy_suffix": "",  # No guidance for original
+                "round_idx": self._current_round,
+            }
+            if d not in self._directions_completed and not self._is_task_skipped(task):
+                return task
         
         # All directions completed original, transition to next phase
         self._current_round += 1
@@ -464,6 +499,8 @@ class EvolutionController:
             }
             
             self._mutation_idx += 1
+            if self._is_task_skipped(task):
+                continue
             return task
         
         # All mutation tasks complete, transition to next phase
@@ -707,6 +744,8 @@ class EvolutionController:
         }
         
         self._crossover_idx += 1
+        if self._is_task_skipped(task):
+            return self._get_crossover_task()
         return task
     
     def report_task_complete(
@@ -737,6 +776,31 @@ class EvolutionController:
         
         elif phase == RoundPhase.CROSSOVER:
             logger.info(f"Crossover round complete (group {direction_id})")
+
+    def report_task_failed(self, task: dict[str, Any], error: str | None = None) -> bool:
+        """
+        Report that a task failed.
+
+        Returns True when the task reached max_task_failures and should be skipped
+        for the rest of this phase/round/direction.
+        """
+        key = self._task_key(task)
+        count = self._failed_task_counts.get(key, 0) + 1
+        self._failed_task_counts[key] = count
+        logger.warning(
+            "Evolution task failed "
+            f"({self._format_task_key(key)}, attempt={count}/{self.config.max_task_failures}): "
+            f"{error or ''}"
+        )
+        if count < self.config.max_task_failures:
+            return False
+
+        self._skipped_task_keys.add(key)
+        logger.error(
+            "Evolution task skipped after repeated failures: "
+            f"{self._format_task_key(key)}"
+        )
+        return True
     
     def create_trajectory_from_loop_result(
         self,
@@ -935,6 +999,10 @@ class EvolutionController:
             "active_branch_count": self._active_branch_count,
             "mutation_idx": self._mutation_idx,
             "mutation_target_ids": [t.trajectory_id for t in self._mutation_targets],
+            "failed_task_counts": {
+                self._format_task_key(key): value for key, value in self._failed_task_counts.items()
+            },
+            "skipped_task_keys": [self._format_task_key(key) for key in sorted(self._skipped_task_keys)],
             "config": {
                 "num_directions": self.config.num_directions,
                 "max_rounds": self.config.max_rounds,
@@ -942,6 +1010,7 @@ class EvolutionController:
                 "crossover_enabled": self.config.crossover_enabled,
                 "crossover_size": self.config.crossover_size,
                 "crossover_n": self.config.crossover_n,
+                "max_task_failures": self.config.max_task_failures,
             }
         }
         
@@ -968,6 +1037,13 @@ class EvolutionController:
         self._crossover_idx = state.get("crossover_idx", 0)
         self._active_branch_count = state.get("active_branch_count", self.config.num_directions)
         self._mutation_idx = state.get("mutation_idx", 0)
+        self._failed_task_counts = {
+            self._parse_task_key(key): int(value)
+            for key, value in (state.get("failed_task_counts") or {}).items()
+        }
+        self._skipped_task_keys = {
+            self._parse_task_key(key) for key in (state.get("skipped_task_keys") or [])
+        }
         
         # Restore mutation targets from IDs
         mutation_target_ids = state.get("mutation_target_ids", [])

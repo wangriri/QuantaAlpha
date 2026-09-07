@@ -352,13 +352,17 @@ def _run_tasks_parallel(
             results.append(result)
             logger.info(f"Task {result['task_idx']} completed")
         else:
+            original_task = tasks[result["task_idx"]]
+            result["task"] = original_task
+            results.append(result)
             logger.error(f"Task {result['task_idx']} failed: {result['error']}")
             logger.error(result.get('traceback', ''))
 
     for p in processes:
         p.join()
 
-    logger.info(f"Parallel tasks done: {len(results)}/{len(tasks)} succeeded")
+    success_count = sum(1 for result in results if result.get("success"))
+    logger.info(f"Parallel tasks done: {success_count}/{len(tasks)} succeeded")
     
     return results
 
@@ -398,6 +402,7 @@ def run_evolution_loop(
     parallel_enabled = bool(evolution_cfg.get("parallel_enabled", False))
     fresh_start = bool(evolution_cfg.get("fresh_start", True))
     cleanup_on_finish = bool(evolution_cfg.get("cleanup_on_finish", False))
+    max_task_failures = int(evolution_cfg.get("max_task_failures", 2))
 
     # Generate initial directions
     planning_enabled = bool(planning_cfg.get("enabled", False))
@@ -455,6 +460,7 @@ def run_evolution_loop(
         mutation_prompt_path=str(mutation_prompt_path) if mutation_prompt_path.exists() else None,
         crossover_prompt_path=str(mutation_prompt_path) if mutation_prompt_path.exists() else None,
         fresh_start=fresh_start,
+        max_task_failures=max_task_failures,
     )
 
     controller = EvolutionController(config)
@@ -519,6 +525,8 @@ def run_evolution_loop(
                     controller.report_task_complete(task, trajectory)
                     completed_tasks.append(task)
                     logger.info(f"Trajectory done: {trajectory.trajectory_id}, RankIC={trajectory.get_primary_metric()}")
+                else:
+                    controller.report_task_failed(result["task"], str(result.get("error", "")))
 
             controller.advance_phase_after_parallel_completion(completed_tasks)
 
@@ -560,6 +568,7 @@ def run_evolution_loop(
                 logger.error(f"Task failed: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
+                controller.report_task_failed(task, str(e))
                 continue
 
     state_path = Path(log_root) / "evolution_state.json"

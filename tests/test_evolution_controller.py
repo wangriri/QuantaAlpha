@@ -64,6 +64,52 @@ class EvolutionControllerTest(unittest.TestCase):
         )
         self.assertTrue(controller.is_complete())
 
+    def test_serial_failed_original_task_is_skipped_after_limit(self):
+        controller = EvolutionController(
+            EvolutionConfig(
+                num_directions=1,
+                max_rounds=1,
+                mutation_enabled=False,
+                crossover_enabled=False,
+                fresh_start=True,
+                max_task_failures=2,
+            )
+        )
+
+        first = controller.get_next_task()
+        self.assertIsNotNone(first)
+        self.assertFalse(controller.report_task_failed(first, "json empty"))
+
+        second = controller.get_next_task()
+        self.assertEqual(first["phase"], second["phase"])
+        self.assertEqual(first["round_idx"], second["round_idx"])
+        self.assertEqual(first["direction_id"], second["direction_id"])
+        self.assertTrue(controller.report_task_failed(second, "json empty"))
+
+        self.assertIsNone(controller.get_next_task())
+        self.assertTrue(controller.is_complete())
+
+    def test_parallel_failed_original_tasks_advance_after_skip(self):
+        controller = EvolutionController(
+            EvolutionConfig(
+                num_directions=2,
+                max_rounds=1,
+                mutation_enabled=False,
+                crossover_enabled=False,
+                fresh_start=True,
+                max_task_failures=1,
+            )
+        )
+
+        tasks = controller.get_all_tasks_for_current_phase()
+        self.assertEqual(len(tasks), 2)
+
+        for task in tasks:
+            self.assertTrue(controller.report_task_failed(task, "json empty"))
+
+        self.assertEqual(controller.get_all_tasks_for_current_phase(), [])
+        self.assertTrue(controller.is_complete())
+
 
 if __name__ == "__main__":
     unittest.main()
