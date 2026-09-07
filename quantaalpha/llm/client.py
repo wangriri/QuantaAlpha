@@ -329,6 +329,21 @@ class APIBackend:
     So we should split them into different classes in `oai/backends/` in the future.
     """
 
+    _OPENAI_DEFAULT_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4")
+
+    def _is_deepseek_endpoint(self) -> bool:
+        endpoint = self.base_url or getattr(self, "chat_api_base", "") or ""
+        return "deepseek" in endpoint.lower()
+
+    def _coerce_provider_model(self, model: str | None) -> str:
+        selected = (model or "").strip()
+        if not self._is_deepseek_endpoint():
+            return selected
+
+        if not selected or selected.startswith(self._OPENAI_DEFAULT_MODEL_PREFIXES):
+            return (os.environ.get("CHAT_MODEL") or "deepseek-v4-flash").strip()
+        return selected
+
     # FIXME: (xiao) We should avoid using self.xxxx.
     # Instead, we can use LLM_SETTINGS directly. If it's difficult to support different backend settings, we can split them into multiple BaseSettings.
     def __init__(  # noqa: C901, PLR0912, PLR0915
@@ -431,8 +446,10 @@ class APIBackend:
             )
             
 
-            self.chat_model = LLM_SETTINGS.chat_model if chat_model is None else chat_model
-            self.reasoning_model = LLM_SETTINGS.reasoning_model if reasoning_model is None else reasoning_model
+            self.chat_model = self._coerce_provider_model(LLM_SETTINGS.chat_model if chat_model is None else chat_model)
+            self.reasoning_model = self._coerce_provider_model(
+                LLM_SETTINGS.reasoning_model if reasoning_model is None else reasoning_model
+            )
             self.chat_model_map = json.loads(LLM_SETTINGS.chat_model_map)
             # self.encoder = self._get_encoder()
             
@@ -802,10 +819,10 @@ class APIBackend:
             tag = inspect.stack()[4].function
             
         if reasoning_flag:
-            model = self.reasoning_model
+            model = self._coerce_provider_model(self.reasoning_model)
             json_mode = None
         else:
-            model = self.chat_model_map.get(tag, self.chat_model)
+            model = self._coerce_provider_model(self.chat_model_map.get(tag, self.chat_model))
 
         finish_reason = None
         if self.use_llama2:

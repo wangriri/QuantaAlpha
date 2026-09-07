@@ -48,6 +48,24 @@ class _FakeChatClient:
 
 
 class LLMClientEmptyFallbackTest(unittest.TestCase):
+    def test_deepseek_endpoint_coerces_openai_default_model_names(self):
+        api = object.__new__(APIBackend)
+        api.base_url = "https://api.deepseek.com"
+        api.chat_api_base = ""
+
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(api._coerce_provider_model("gpt-4-turbo"), "deepseek-v4-flash")
+            self.assertEqual(api._coerce_provider_model(""), "deepseek-v4-flash")
+            self.assertEqual(api._coerce_provider_model("deepseek-chat"), "deepseek-chat")
+
+    def test_deepseek_endpoint_uses_configured_chat_model_for_openai_default(self):
+        api = object.__new__(APIBackend)
+        api.base_url = "https://api.deepseek.com"
+        api.chat_api_base = ""
+
+        with patch.dict("os.environ", {"CHAT_MODEL": "deepseek-chat"}, clear=True):
+            self.assertEqual(api._coerce_provider_model("gpt-4-turbo"), "deepseek-chat")
+
     def test_deepseek_v4_flash_empty_stream_falls_back_to_deepseek_chat(self):
         api = object.__new__(APIBackend)
         api.use_chat_cache = False
