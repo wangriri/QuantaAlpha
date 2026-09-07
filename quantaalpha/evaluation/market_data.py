@@ -85,7 +85,17 @@ class MongoMarketDataProvider:
             raise MarketDataError(f"Mongo connection failed: {type(exc).__name__}") from exc
 
     def load_trade_dates(self, start: str, end: str) -> list[pd.Timestamp]:
-        db = self._database()
+        try:
+            db = self._database()
+        except MarketDataError as exc:
+            cached = self._load_trade_dates_from_cache(start, end)
+            if cached:
+                return cached
+            local_calendar = self._load_trade_dates_from_qlib_calendar(start, end)
+            if local_calendar:
+                return local_calendar
+            raise exc
+
         start_ymd, end_ymd = _to_ymd(start), _to_ymd(end)
         try:
             values = db["Index_DayLine"].distinct(
@@ -95,6 +105,48 @@ class MongoMarketDataProvider:
         except Exception as exc:
             raise MarketDataError(f"Failed to load trade calendar: {type(exc).__name__}") from exc
         return sorted(pd.Timestamp(value) for value in values)
+
+    def _load_trade_dates_from_cache(self, start: str, end: str) -> list[pd.Timestamp]:
+        root = self._cache_path(start, end).parent
+        if not root.exists():
+            return []
+        requested_start = pd.Timestamp(start)
+        requested_end = pd.Timestamp(end)
+        candidates = sorted(root.glob("oto_panel_exact_session_v2_*.pkl"), key=lambda item: item.stat().st_mtime, reverse=True)
+        for candidate in candidates:
+            try:
+                panel = self._validate_panel(pd.read_pickle(candidate))
+            except Exception:
+                continue
+            dates = pd.Index(panel["entry_date"]).append(pd.Index(panel["exit_date"]))
+            dates = pd.DatetimeIndex(pd.to_datetime(dates.dropna()).unique()).sort_values()
+            selected = [date for date in dates if requested_start <= date <= requested_end]
+            if selected and selected[0] <= requested_start and selected[-1] >= requested_end:
+                return [pd.Timestamp(date) for date in selected]
+        return []
+
+    def _load_trade_dates_from_qlib_calendar(self, start: str, end: str) -> list[pd.Timestamp]:
+        calendar_paths = [
+            PROJECT_ROOT / "data" / "qlib" / "cn_data" / "calendars" / "day.txt",
+            Path("~/.qlib/qlib_data/cn_data/calendars/day.txt").expanduser(),
+        ]
+        requested_start = pd.Timestamp(start)
+        requested_end = pd.Timestamp(end)
+        for calendar_path in calendar_paths:
+            if not calendar_path.exists():
+                continue
+            try:
+                dates = [
+                    pd.Timestamp(line.strip())
+                    for line in calendar_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            except Exception:
+                continue
+            selected = [date for date in dates if requested_start <= date <= requested_end]
+            if selected:
+                return selected
+        return []
 
     def _cache_path(self, start: str, end: str) -> Path:
         raw = self.config.section("engine").get("market_cache_dir", "data/results/evaluation_cache")
