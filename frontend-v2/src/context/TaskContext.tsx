@@ -255,7 +255,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           numDirections: config.numDirections || defaults.defaultNumDirections || 1,
           maxRounds: config.maxRounds || defaults.defaultMaxRounds || 1,
           maxLoops: config.maxLoops || defaults.defaultMaxLoops || 1,
-          factorsPerHypothesis: config.factorsPerHypothesis || defaults.defaultFactorsPerHypothesis || 1,
+          factorsPerHypothesis: config.factorsPerHypothesis || defaults.defaultFactorsPerHypothesis || 3,
           librarySuffix: config.librarySuffix || defaults.defaultLibrarySuffix || undefined,
           qualityGateEnabled: config.qualityGateEnabled ?? defaults.qualityGateEnabled ?? false,
           parallelEnabled: config.parallelExecution ?? defaults.parallelExecution ?? false,

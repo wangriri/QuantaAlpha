@@ -75,7 +75,7 @@ class MiningStartRequest(BaseModel):
     numDirections: Optional[int] = Field(1, description="Parallel exploration directions")
     maxRounds: Optional[int] = Field(1, description="Evolution rounds")
     maxLoops: Optional[int] = Field(1, description="Iterations per direction")
-    factorsPerHypothesis: Optional[int] = Field(1, description="Factors per hypothesis")
+    factorsPerHypothesis: Optional[int] = Field(3, description="Factors per hypothesis")
     librarySuffix: Optional[str] = Field(None, description="Factor library file suffix")
     qualityGateEnabled: Optional[bool] = Field(None, description="Enable quality gate checks")
     parallelEnabled: Optional[bool] = Field(None, description="Enable parallel execution within evolution phases")
@@ -244,7 +244,7 @@ def _get_experiment_defaults(dotenv: Optional[Dict[str, str]] = None) -> Dict[st
         "defaultNumDirections": int(planning.get("num_directions", 1) or 1),
         "defaultMaxRounds": int(evolution.get("max_rounds", 1) or 1),
         "defaultMaxLoops": int(execution.get("max_loops", 1) or 1),
-        "defaultFactorsPerHypothesis": int(factor.get("factors_per_hypothesis", 1) or 1),
+        "defaultFactorsPerHypothesis": int(factor.get("factors_per_hypothesis", 3) or 3),
         "defaultMarket": bt_data.get("market", "csi300"),
         "parallelExecution": bool(
             evolution.get("parallel_enabled", execution.get("parallel_execution", False))

@@ -137,7 +137,7 @@ quality_gate:
 # ============================================================
 factor:
   # Number of factors to generate per hypothesis
-  factors_per_hypothesis: 1
+  factors_per_hypothesis: 3
 
   # Complexity constraints (important for preventing overfitting; keep symbol length under ~250)
   complexity:

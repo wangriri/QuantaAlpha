@@ -42,7 +42,7 @@ const DEFAULT_CONFIG: SystemConfig = {
   defaultNumDirections: 1,
   defaultMaxRounds: 1,
   defaultMaxLoops: 1,
-  defaultFactorsPerHypothesis: 1,
+  defaultFactorsPerHypothesis: 3,
   defaultMarket: 'csi300',
   parallelExecution: false,
   qualityGateEnabled: false,
