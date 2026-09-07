@@ -133,6 +133,39 @@ class EvaluationServicesTest(unittest.TestCase):
         self.assertEqual(Path(recorder.calls[0]["workspace_path"]), workspace)
         self.assertEqual(Path(recorder.calls[0]["source_data_path"]), workspace / "daily_pv.h5")
 
+    def test_expression_fallback_cache_is_recomputed_on_reevaluation(self):
+        old_workspace = self.root / "old_workspace"
+        old_workspace.mkdir()
+        index = pd.MultiIndex.from_product(
+            [[pd.Timestamp("2023-01-03")], ["sh600000"]], names=["datetime", "instrument"]
+        )
+        old_h5 = old_workspace / "result.h5"
+        pd.Series([999.0], index=index, name="factor").to_hdf(old_h5, key="data")
+        library_path = self.root / "library.json"
+        library_path.write_text(json.dumps({"metadata": {}, "factors": {"id": {
+            "factor_name": "factor",
+            "factor_expression": "TS_MEAN($close, 5)",
+            "cache_location": {
+                "result_h5_path": str(old_h5),
+                "generated_by": "evaluation_v2_expression_fallback",
+            },
+        }}}), encoding="utf-8")
+
+        service = FactorLibraryEvaluationService(_config(self.root))
+        service.evaluator = _Evaluator()
+        recorder = _RecordingAuditor()
+        service.auditor = recorder
+        with patch("quantaalpha.backtest.custom_factor_calculator.CustomFactorCalculator", _ExpressionCalculator):
+            summary = service.evaluate_library(library_path, mode="all")
+
+        saved = json.loads(library_path.read_text(encoding="utf-8"))["factors"]["id"]
+        new_h5 = Path(saved["cache_location"]["result_h5_path"])
+        self.assertEqual(summary["passed"], 1)
+        self.assertNotEqual(new_h5, old_h5)
+        self.assertTrue((new_h5.parent / "daily_pv.h5").exists())
+        self.assertEqual(Path(recorder.calls[0]["source_data_path"]), new_h5.parent / "daily_pv.h5")
+        self.assertEqual(float(pd.read_hdf(new_h5, key="data").iloc[0]), 0.0)
+
     def test_stage_source_data_prefers_calculator_source_over_canonical_daily_pv(self):
         source_dir = self.root / "source"
         source_dir.mkdir()

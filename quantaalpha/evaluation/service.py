@@ -197,16 +197,20 @@ class FactorLibraryEvaluationService:
         refresh_market_cache: bool,
     ) -> dict[str, Any]:
         factor_name = entry.get("factor_name", factor_id)
-        h5_path = entry.get("cache_location", {}).get("result_h5_path")
+        cache_location = entry.get("cache_location") or {}
+        h5_path = cache_location.get("result_h5_path")
+        expression = str(entry.get("factor_expression", "")).strip()
+        should_recompute_fallback_cache = (
+            cache_location.get("generated_by") == "evaluation_v2_expression_fallback" and bool(expression)
+        )
         run_id = uuid.uuid4().hex[:12]
         source_data_path: Path | None = None
         workspace: Path | None = None
 
-        if h5_path and Path(h5_path).exists():
+        if h5_path and Path(h5_path).exists() and not should_recompute_fallback_cache:
             values = pd.read_hdf(h5_path)
             workspace = Path(h5_path).parent
         else:
-            expression = str(entry.get("factor_expression", "")).strip()
             if not expression:
                 return {
                     "factor_id": factor_id,
