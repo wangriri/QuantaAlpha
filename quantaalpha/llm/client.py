@@ -929,25 +929,6 @@ class APIBackend:
 
             resp, finish_reason, _ = collect_response(kwargs)
 
-            if not resp.strip() and not reasoning_flag:
-                fallback_model = LLM_SETTINGS.chat_fallback_model.strip()
-                if (
-                    not fallback_model
-                    and "deepseek" in (self.base_url or "").lower()
-                    and model == "deepseek-v4-flash"
-                ):
-                    fallback_model = "deepseek-chat"
-
-                if fallback_model and fallback_model != model:
-                    fallback_kwargs = dict(kwargs)
-                    fallback_kwargs["model"] = fallback_model
-                    fallback_kwargs["stream"] = False
-                    logger.warning(
-                        "Retrying empty LLM response with fallback model "
-                        f"{fallback_model} (original_model={model}, finish_reason={finish_reason})"
-                    )
-                    resp, finish_reason, _ = collect_response(fallback_kwargs)
-
             if not resp.strip():
                 raise RuntimeError(
                     f"LLM returned empty response (model={model}, finish_reason={finish_reason})"

@@ -66,7 +66,7 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
         with patch.dict("os.environ", {"CHAT_MODEL": "deepseek-chat"}, clear=True):
             self.assertEqual(api._coerce_provider_model("gpt-4-turbo"), "deepseek-chat")
 
-    def test_deepseek_v4_flash_empty_stream_falls_back_to_deepseek_chat(self):
+    def test_deepseek_v4_flash_empty_stream_raises_without_fallback(self):
         api = object.__new__(APIBackend)
         api.use_chat_cache = False
         api.dump_chat_cache = False
@@ -81,18 +81,16 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
         api.chat_client = _FakeChatClient()
 
         with patch.object(LLM_SETTINGS, "chat_fallback_model", ""):
-            response, finish_reason = api._create_chat_completion_inner_function(
-                [{"role": "user", "content": "return JSON"}],
-                reasoning_flag=False,
-                json_mode=True,
-            )
+            with self.assertRaisesRegex(RuntimeError, "LLM returned empty response"):
+                api._create_chat_completion_inner_function(
+                    [{"role": "user", "content": "return JSON"}],
+                    reasoning_flag=False,
+                    json_mode=True,
+                )
 
-        self.assertEqual(response, '{"ok": true}')
-        self.assertEqual(finish_reason, "stop")
         calls = api.chat_client.chat.completions.calls
-        self.assertEqual([call["model"] for call in calls], ["deepseek-v4-flash", "deepseek-chat"])
+        self.assertEqual([call["model"] for call in calls], ["deepseek-v4-flash"])
         self.assertTrue(calls[0]["stream"])
-        self.assertFalse(calls[1]["stream"])
 
 
 if __name__ == "__main__":
