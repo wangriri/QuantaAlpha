@@ -344,6 +344,16 @@ class APIBackend:
             return (os.environ.get("CHAT_MODEL") or "deepseek-v4-flash").strip()
         return selected
 
+    def _build_provider_extra_body(self, *, model: str, reasoning_flag: bool) -> dict[str, Any] | None:
+        if (
+            self._is_deepseek_endpoint()
+            and LLM_SETTINGS.deepseek_disable_thinking
+            and not reasoning_flag
+            and model != "deepseek-reasoner"
+        ):
+            return {"thinking": {"type": "disabled"}}
+        return None
+
     # FIXME: (xiao) We should avoid using self.xxxx.
     # Instead, we can use LLM_SETTINGS directly. If it's difficult to support different backend settings, we can split them into multiple BaseSettings.
     def __init__(  # noqa: C901, PLR0912, PLR0915
@@ -866,6 +876,9 @@ class APIBackend:
                 frequency_penalty=frequency_penalty,
                 presence_penalty=presence_penalty,
             )
+            provider_extra_body = self._build_provider_extra_body(model=model, reasoning_flag=reasoning_flag)
+            if provider_extra_body is not None:
+                kwargs["extra_body"] = provider_extra_body
             
             if json_mode:
                 if add_json_in_prompt:
