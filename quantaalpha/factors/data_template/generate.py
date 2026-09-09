@@ -6,17 +6,18 @@ qlib.init(provider_uri=_provider)
 from qlib.data import D
 
 instruments = D.instruments()
-fields = ["$open", "$close", "$high", "$low", "$volume"]  # , "$amount", "$turn", "$pettm", "$pbmrq"
+fields = ["$open", "$close", "$high", "$low", "$volume", "$amount"]  # , "$turn", "$pettm", "$pbmrq"
 data = D.features(instruments, fields, freq="day").swaplevel().sort_index().loc["2015-01-01":].sort_index()
 
 # Calculate return
 data["$return"] = data.groupby(level=0)["$close"].pct_change().fillna(0)
+data["$vwap"] = data["$amount"] / (data["$volume"] + 1e-8)
 
 print(data)
 
 data.to_hdf("./daily_pv_all.h5", key="data")
 
-fields = ["$open", "$close", "$high", "$low", "$volume"]  # , "$amount", "$turn", "$pettm", "$pbmrq"
+fields = ["$open", "$close", "$high", "$low", "$volume", "$amount"]  # , "$turn", "$pettm", "$pbmrq"
 data = (
     (
         D.features(instruments, fields, freq="day")
@@ -31,5 +32,6 @@ data = (
 
 # Calculate return
 data["$return"] = data.groupby(level=0)["$close"].pct_change().fillna(0)
+data["$vwap"] = data["$amount"] / (data["$volume"] + 1e-8)
 print(data)
 data.to_hdf("./daily_pv_debug.h5", key="data")

@@ -408,6 +408,8 @@ hypothesis2experiment:
     - $high: high price of the stock on that day.
     - $low: low price of the stock on that day.
     - $volume: volume of the stock on that day.
+    - $amount: trading amount of the stock on that day.
+    - $vwap: volume-weighted average price, derived as $amount / ($volume + 1e-8).
     - $return: daily return of the stock on that day.
 
     允许使用的算子和函数如下：
