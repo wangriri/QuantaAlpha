@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -154,13 +156,25 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
         api.base_url = "https://api.deepseek.com"
         api.chat_client = _FakeChatClient()
 
-        with patch.object(LLM_SETTINGS, "chat_fallback_model", ""):
-            with self.assertRaisesRegex(RuntimeError, "reasoning_content_preview=.*继续推导"):
-                api._create_chat_completion_inner_function(
-                    [{"role": "user", "content": "return JSON"}],
-                    reasoning_flag=False,
-                    json_mode=True,
-                )
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.object(LLM_SETTINGS, "chat_fallback_model", ""),
+                patch.dict("os.environ", {"QUANTAALPHA_ACTIVE_TRACE_DIR": tmpdir}, clear=False),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "reasoning_content_preview=.*继续推导"):
+                    api._create_chat_completion_inner_function(
+                        [{"role": "user", "content": "return JSON"}],
+                        reasoning_flag=False,
+                        json_mode=True,
+                    )
+
+            reasoning_dir = Path(tmpdir) / "99_reasoning_content"
+            txt_files = list(reasoning_dir.glob("*.txt"))
+            json_files = list(reasoning_dir.glob("*.json"))
+            self.assertEqual(len(txt_files), 1)
+            self.assertEqual(len(json_files), 1)
+            self.assertEqual(txt_files[0].read_text(encoding="utf-8"), "先分析输入格式。继续推导但没有输出正文。")
+            self.assertIn("reasoning_content", json_files[0].read_text(encoding="utf-8"))
 
         calls = api.chat_client.chat.completions.calls
         self.assertEqual([call["model"] for call in calls], ["deepseek-v4-flash"])

@@ -376,6 +376,71 @@ class APIBackend:
             return text
         return text[:limit] + f"... [{len(text)} chars]"
 
+    @staticmethod
+    def _safe_filename_part(text: Any, fallback: str = "unknown") -> str:
+        value = str(text or fallback)
+        value = re.sub(r"[^0-9A-Za-z_.-]+", "_", value).strip("_")
+        return value[:80] or fallback
+
+    def _reasoning_output_dir(self) -> Path:
+        trace_dir = os.environ.get("QUANTAALPHA_ACTIVE_TRACE_DIR")
+        if trace_dir:
+            return Path(trace_dir) / "99_reasoning_content"
+        workspace = os.environ.get("WORKSPACE_PATH")
+        if workspace:
+            return Path(workspace) / "reasoning_content"
+        return Path.cwd() / "data" / "results" / "reasoning_content"
+
+    def _write_reasoning_content(
+        self,
+        *,
+        reasoning_text: str,
+        model: str | None,
+        tag: str,
+        finish_reason: str | None,
+        stream: bool,
+        content_text: str,
+        chunk_count: int | None = None,
+        content_chunk_count: int | None = None,
+        reasoning_chunk_count: int | None = None,
+    ) -> dict[str, str | int | bool | None]:
+        output_dir = self._reasoning_output_dir()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        suffix = uuid.uuid4().hex[:8]
+        base = "_".join(
+            [
+                stamp,
+                self._safe_filename_part(tag, "unknown_tag"),
+                self._safe_filename_part(model, "unknown_model"),
+                self._safe_filename_part(finish_reason, "no_finish"),
+                suffix,
+            ]
+        )
+        txt_path = output_dir / f"{base}.txt"
+        json_path = output_dir / f"{base}.json"
+        txt_path.write_text(reasoning_text, encoding="utf-8")
+        metadata = {
+            "model": model,
+            "tag": tag,
+            "finish_reason": finish_reason,
+            "stream": stream,
+            "reasoning_chars": len(reasoning_text),
+            "content_chars": len(content_text),
+            "chunk_count": chunk_count,
+            "content_chunk_count": content_chunk_count,
+            "reasoning_chunk_count": reasoning_chunk_count,
+            "txt_path": str(txt_path),
+            "reasoning_content": reasoning_text,
+            "content_preview": self._preview_text(content_text, 2000),
+        }
+        json_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {
+            "txt_path": str(txt_path),
+            "json_path": str(json_path),
+            "reasoning_chars": len(reasoning_text),
+        }
+
     # FIXME: (xiao) We should avoid using self.xxxx.
     # Instead, we can use LLM_SETTINGS directly. If it's difficult to support different backend settings, we can split them into multiple BaseSettings.
     def __init__(  # noqa: C901, PLR0912, PLR0915
@@ -933,11 +998,24 @@ class APIBackend:
                     if LLM_SETTINGS.log_llm_chat_content:
                         display_resp = self._preview_text(text, 200)
                         logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
+                    reasoning_artifact = None
                     if reasoning_text and (not text.strip() or call_finish_reason == "length"):
+                        reasoning_artifact = self._write_reasoning_content(
+                            reasoning_text=reasoning_text,
+                            model=call_kwargs.get("model"),
+                            tag=tag,
+                            finish_reason=call_finish_reason,
+                            stream=True,
+                            content_text=text,
+                            chunk_count=chunk_count,
+                            content_chunk_count=content_chunk_count,
+                            reasoning_chunk_count=reasoning_chunk_count,
+                        )
                         logger.warning(
                             "LLM reasoning_content preview "
                             f"(model={call_kwargs.get('model')}, finish_reason={call_finish_reason}, "
-                            f"reasoning_chunks={reasoning_chunk_count}, reasoning_chars={len(reasoning_text)}): "
+                            f"reasoning_chunks={reasoning_chunk_count}, reasoning_chars={len(reasoning_text)}, "
+                            f"txt_path={reasoning_artifact['txt_path']}, json_path={reasoning_artifact['json_path']}): "
                             f"{self._preview_text(reasoning_text)}"
                         )
                     if not text.strip():
@@ -972,10 +1050,20 @@ class APIBackend:
                             tag="llm_messages",
                         )
                 if reasoning_text and (not text.strip() or call_finish_reason == "length"):
+                    reasoning_artifact = self._write_reasoning_content(
+                        reasoning_text=reasoning_text,
+                        model=call_kwargs.get("model"),
+                        tag=tag,
+                        finish_reason=call_finish_reason,
+                        stream=False,
+                        content_text=text,
+                    )
                     logger.warning(
                         "LLM reasoning_content preview "
                         f"(model={call_kwargs.get('model')}, finish_reason={call_finish_reason}, "
-                        f"reasoning_chars={len(reasoning_text)}): {self._preview_text(reasoning_text)}"
+                        f"reasoning_chars={len(reasoning_text)}, "
+                        f"txt_path={reasoning_artifact['txt_path']}, json_path={reasoning_artifact['json_path']}): "
+                        f"{self._preview_text(reasoning_text)}"
                     )
                 if not text.strip():
                     logger.warning(

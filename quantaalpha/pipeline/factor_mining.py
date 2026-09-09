@@ -652,6 +652,7 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
             },
         )
         logger.info(f"Run trace directory: {trace_recorder.run_dir}")
+        os.environ["QUANTAALPHA_ACTIVE_TRACE_DIR"] = str(trace_recorder.run_dir)
 
         if evolution_mode is not None:
             use_evolution = evolution_mode
