@@ -66,31 +66,78 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
         with patch.dict("os.environ", {"CHAT_MODEL": "deepseek-chat"}, clear=True):
             self.assertEqual(api._coerce_provider_model("gpt-4-turbo"), "deepseek-chat")
 
-    def test_deepseek_chat_disables_thinking_for_non_reasoning_calls(self):
+    def test_deepseek_chat_enables_thinking_by_default(self):
+        api = object.__new__(APIBackend)
+        api.base_url = "https://api.deepseek.com"
+        api.chat_api_base = ""
+
+        with patch.object(LLM_SETTINGS, "deepseek_disable_thinking", False):
+            self.assertEqual(
+                api._build_provider_kwargs(
+                    model="deepseek-v4-flash",
+                    reasoning_flag=False,
+                    tag="AlphaAgentHypothesisGen",
+                ),
+                {"extra_body": {"thinking": {"type": "enabled"}}},
+            )
+
+    def test_deepseek_factor_generation_uses_low_reasoning_effort(self):
+        api = object.__new__(APIBackend)
+        api.base_url = "https://api.deepseek.com"
+        api.chat_api_base = ""
+
+        with (
+            patch.object(LLM_SETTINGS, "deepseek_disable_thinking", False),
+            patch.object(LLM_SETTINGS, "deepseek_factor_generation_reasoning_effort", "low"),
+        ):
+            self.assertEqual(
+                api._build_provider_kwargs(
+                    model="deepseek-v4-flash",
+                    reasoning_flag=False,
+                    tag="AlphaAgentHypothesis2FactorExpression",
+                ),
+                {
+                    "extra_body": {"thinking": {"type": "enabled"}},
+                    "reasoning_effort": "low",
+                },
+            )
+
+    def test_deepseek_thinking_can_still_be_disabled(self):
         api = object.__new__(APIBackend)
         api.base_url = "https://api.deepseek.com"
         api.chat_api_base = ""
 
         with patch.object(LLM_SETTINGS, "deepseek_disable_thinking", True):
             self.assertEqual(
-                api._build_provider_extra_body(model="deepseek-v4-flash", reasoning_flag=False),
-                {"thinking": {"type": "disabled"}},
+                api._build_provider_kwargs(
+                    model="deepseek-v4-flash",
+                    reasoning_flag=False,
+                    tag="AlphaAgentHypothesis2FactorExpression",
+                ),
+                {"extra_body": {"thinking": {"type": "disabled"}}},
             )
-            self.assertIsNone(
-                api._build_provider_extra_body(model="deepseek-reasoner", reasoning_flag=False)
-            )
-            self.assertIsNone(
-                api._build_provider_extra_body(model="deepseek-v4-flash", reasoning_flag=True)
+            self.assertEqual(
+                api._build_provider_kwargs(
+                    model="deepseek-reasoner",
+                    reasoning_flag=False,
+                    tag="AlphaAgentHypothesis2FactorExpression",
+                ),
+                {},
             )
 
-    def test_non_deepseek_endpoint_does_not_add_thinking_body(self):
+    def test_non_deepseek_endpoint_does_not_add_provider_kwargs(self):
         api = object.__new__(APIBackend)
         api.base_url = "https://api.openai.com/v1"
         api.chat_api_base = ""
 
-        with patch.object(LLM_SETTINGS, "deepseek_disable_thinking", True):
-            self.assertIsNone(
-                api._build_provider_extra_body(model="gpt-4-turbo", reasoning_flag=False)
+        with patch.object(LLM_SETTINGS, "deepseek_disable_thinking", False):
+            self.assertEqual(
+                api._build_provider_kwargs(
+                    model="gpt-4-turbo",
+                    reasoning_flag=False,
+                    tag="AlphaAgentHypothesis2FactorExpression",
+                ),
+                {},
             )
 
     def test_deepseek_v4_flash_empty_stream_raises_without_fallback(self):
@@ -118,7 +165,7 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
         calls = api.chat_client.chat.completions.calls
         self.assertEqual([call["model"] for call in calls], ["deepseek-v4-flash"])
         self.assertTrue(calls[0]["stream"])
-        self.assertEqual(calls[0]["extra_body"], {"thinking": {"type": "disabled"}})
+        self.assertEqual(calls[0]["extra_body"], {"thinking": {"type": "enabled"}})
 
 
 if __name__ == "__main__":

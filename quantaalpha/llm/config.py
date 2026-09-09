@@ -34,7 +34,8 @@ class LLMSettings(ExtendedBaseSettings):
     chat_max_tokens: int = 3000
     chat_temperature: float = 0.5
     chat_stream: bool = True
-    deepseek_disable_thinking: bool = True
+    deepseek_disable_thinking: bool = False
+    deepseek_factor_generation_reasoning_effort: str = "low"
     chat_seed: int | None = None
     chat_frequency_penalty: float = 0.0
     chat_presence_penalty: float = 0.0

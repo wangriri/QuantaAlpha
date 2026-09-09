@@ -344,15 +344,17 @@ class APIBackend:
             return (os.environ.get("CHAT_MODEL") or "deepseek-v4-flash").strip()
         return selected
 
-    def _build_provider_extra_body(self, *, model: str, reasoning_flag: bool) -> dict[str, Any] | None:
-        if (
-            self._is_deepseek_endpoint()
-            and LLM_SETTINGS.deepseek_disable_thinking
-            and not reasoning_flag
-            and model != "deepseek-reasoner"
-        ):
-            return {"thinking": {"type": "disabled"}}
-        return None
+    def _build_provider_kwargs(self, *, model: str, reasoning_flag: bool, tag: str) -> dict[str, Any]:
+        if not self._is_deepseek_endpoint() or model == "deepseek-reasoner":
+            return {}
+
+        if LLM_SETTINGS.deepseek_disable_thinking:
+            return {"extra_body": {"thinking": {"type": "disabled"}}}
+
+        provider_kwargs: dict[str, Any] = {"extra_body": {"thinking": {"type": "enabled"}}}
+        if tag == "AlphaAgentHypothesis2FactorExpression" and not reasoning_flag:
+            provider_kwargs["reasoning_effort"] = LLM_SETTINGS.deepseek_factor_generation_reasoning_effort
+        return provider_kwargs
 
     # FIXME: (xiao) We should avoid using self.xxxx.
     # Instead, we can use LLM_SETTINGS directly. If it's difficult to support different backend settings, we can split them into multiple BaseSettings.
@@ -876,9 +878,7 @@ class APIBackend:
                 frequency_penalty=frequency_penalty,
                 presence_penalty=presence_penalty,
             )
-            provider_extra_body = self._build_provider_extra_body(model=model, reasoning_flag=reasoning_flag)
-            if provider_extra_body is not None:
-                kwargs["extra_body"] = provider_extra_body
+            kwargs.update(self._build_provider_kwargs(model=model, reasoning_flag=reasoning_flag, tag=tag))
             
             if json_mode:
                 if add_json_in_prompt:
