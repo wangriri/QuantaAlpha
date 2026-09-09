@@ -17,7 +17,7 @@ class _FakeCompletions:
                 SimpleNamespace(
                     choices=[
                         SimpleNamespace(
-                            delta=SimpleNamespace(content=None),
+                            delta=SimpleNamespace(content=None, reasoning_content="先分析输入格式。"),
                             finish_reason=None,
                         )
                     ]
@@ -25,7 +25,7 @@ class _FakeCompletions:
                 SimpleNamespace(
                     choices=[
                         SimpleNamespace(
-                            delta=SimpleNamespace(content=None),
+                            delta=SimpleNamespace(content=None, reasoning_content="继续推导但没有输出正文。"),
                             finish_reason="length",
                         )
                     ]
@@ -155,7 +155,7 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
         api.chat_client = _FakeChatClient()
 
         with patch.object(LLM_SETTINGS, "chat_fallback_model", ""):
-            with self.assertRaisesRegex(RuntimeError, "LLM returned empty response"):
+            with self.assertRaisesRegex(RuntimeError, "reasoning_content_preview=.*继续推导"):
                 api._create_chat_completion_inner_function(
                     [{"role": "user", "content": "return JSON"}],
                     reasoning_flag=False,

@@ -356,6 +356,26 @@ class APIBackend:
             provider_kwargs["reasoning_effort"] = LLM_SETTINGS.deepseek_factor_generation_reasoning_effort
         return provider_kwargs
 
+    @staticmethod
+    def _get_reasoning_content(obj: Any) -> str:
+        if obj is None:
+            return ""
+        content = getattr(obj, "reasoning_content", None) or getattr(obj, "reasoningContent", None)
+        if content:
+            return str(content)
+        model_extra = getattr(obj, "model_extra", None)
+        if isinstance(model_extra, dict):
+            content = model_extra.get("reasoning_content") or model_extra.get("reasoningContent")
+            if content:
+                return str(content)
+        return ""
+
+    @staticmethod
+    def _preview_text(text: str, limit: int = 2000) -> str:
+        if len(text) <= limit:
+            return text
+        return text[:limit] + f"... [{len(text)} chars]"
+
     # FIXME: (xiao) We should avoid using self.xxxx.
     # Instead, we can use LLM_SETTINGS directly. If it's difficult to support different backend settings, we can split them into multiple BaseSettings.
     def __init__(  # noqa: C901, PLR0912, PLR0915
@@ -887,40 +907,57 @@ class APIBackend:
                         if message["role"] == "system":
                             break
                 kwargs["response_format"] = {"type": "json_object"}
-            def collect_response(call_kwargs: dict) -> tuple[str, str | None, Any]:
+            def collect_response(call_kwargs: dict) -> tuple[str, str | None, Any, str]:
                 response = self.chat_client.chat.completions.create(**call_kwargs)
                 call_finish_reason = None
                 if call_kwargs.get("stream"):
                     text = ""
+                    reasoning_text = ""
                     chunk_count = 0
                     content_chunk_count = 0
+                    reasoning_chunk_count = 0
                     for chunk in response:
                         chunk_count += 1
                         if len(chunk.choices) > 0:
-                            content = chunk.choices[0].delta.content
+                            delta = chunk.choices[0].delta
+                            content = delta.content
                             if content is not None:
                                 content_chunk_count += 1
                                 text += content
+                            reasoning_content = self._get_reasoning_content(delta)
+                            if reasoning_content:
+                                reasoning_chunk_count += 1
+                                reasoning_text += reasoning_content
                             if chunk.choices[0].finish_reason is not None:
                                 call_finish_reason = chunk.choices[0].finish_reason
                     if LLM_SETTINGS.log_llm_chat_content:
-                        display_resp = text[:200] + f"... [{len(text)} chars]" if len(text) > 200 else text
+                        display_resp = self._preview_text(text, 200)
                         logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
+                    if reasoning_text and (not text.strip() or call_finish_reason == "length"):
+                        logger.warning(
+                            "LLM reasoning_content preview "
+                            f"(model={call_kwargs.get('model')}, finish_reason={call_finish_reason}, "
+                            f"reasoning_chunks={reasoning_chunk_count}, reasoning_chars={len(reasoning_text)}): "
+                            f"{self._preview_text(reasoning_text)}"
+                        )
                     if not text.strip():
                         logger.warning(
                             "LLM returned empty streamed content "
                             f"(model={call_kwargs.get('model')}, finish_reason={call_finish_reason}, "
-                            f"chunks={chunk_count}, content_chunks={content_chunk_count})"
+                            f"chunks={chunk_count}, content_chunks={content_chunk_count}, "
+                            f"reasoning_chunks={reasoning_chunk_count})"
                         )
-                    return text, call_finish_reason, None
+                    return text, call_finish_reason, None, reasoning_text
 
                 text = response.choices[0].message.content or ""
+                reasoning_text = self._get_reasoning_content(response.choices[0].message)
                 call_finish_reason = response.choices[0].finish_reason
                 if LLM_SETTINGS.log_llm_chat_content:
-                    display_resp = text[:200] + f"... [{len(text)} chars]" if len(text) > 200 else text
+                    display_resp = self._preview_text(text, 200)
                     logger.info(f"{LogColors.CYAN}Response:{display_resp}{LogColors.END}", tag="llm_messages")
                     usage = response.usage
                     if usage is not None:
+                        details = getattr(usage, "completion_tokens_details", None)
                         logger.info(
                             json.dumps(
                                 {
@@ -928,23 +965,33 @@ class APIBackend:
                                     "total_tokens": usage.total_tokens,
                                     "prompt_tokens": usage.prompt_tokens,
                                     "completion_tokens": usage.completion_tokens,
+                                    "reasoning_tokens": getattr(details, "reasoning_tokens", None),
                                     "model": call_kwargs.get("model"),
                                 }
                             ),
                             tag="llm_messages",
                         )
+                if reasoning_text and (not text.strip() or call_finish_reason == "length"):
+                    logger.warning(
+                        "LLM reasoning_content preview "
+                        f"(model={call_kwargs.get('model')}, finish_reason={call_finish_reason}, "
+                        f"reasoning_chars={len(reasoning_text)}): {self._preview_text(reasoning_text)}"
+                    )
                 if not text.strip():
                     logger.warning(
                         "LLM returned empty content "
                         f"(model={call_kwargs.get('model')}, finish_reason={call_finish_reason})"
                     )
-                return text, call_finish_reason, response
+                return text, call_finish_reason, response, reasoning_text
 
-            resp, finish_reason, _ = collect_response(kwargs)
+            resp, finish_reason, _, reasoning_text = collect_response(kwargs)
 
             if not resp.strip():
+                reasoning_suffix = ""
+                if reasoning_text:
+                    reasoning_suffix = f"; reasoning_content_preview={self._preview_text(reasoning_text)}"
                 raise RuntimeError(
-                    f"LLM returned empty response (model={model}, finish_reason={finish_reason})"
+                    f"LLM returned empty response (model={model}, finish_reason={finish_reason}{reasoning_suffix})"
                 )
             if json_mode or reasoning_flag:
                 # Extract JSON part
