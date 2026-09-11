@@ -9,14 +9,21 @@ universe:
   exclude_open_limit: true
 
 periods:
-  training: ["2023-01-01", "2025-06-30"]
-  validation: ["2025-07-01", "2025-12-31"]
+  training:
+    - '2023-01-01'
+    - '2025-06-30'
+  validation:
+    - '2025-07-01'
+    - '2025-12-31'
   prohibit_cross_period_returns: true
   oos_status: sealed
 
 alignment:
   factor_lag_trading_days: 1
   label: oto_open_to_open
+
+portfolio:
+  rebalance_period_days: 3
 
 lookahead_audit:
   enabled: true
@@ -35,16 +42,15 @@ metrics:
   group_count: 10
   qcut_noise_std: 1.0e-8
   qcut_random_seed:
-  spread_threshold: 0.30
+  spread_threshold: 0.3
   excess_sharpe_threshold: 1.0
 
 costs:
   schedule:
-    - end_date: "2023-12-31"
+    - end_date: '2023-12-31'
       rate: 0.0007
-    - end_date: "9999-12-31"
+    - end_date: '9999-12-31'
       rate: 0.00035
-  charge_benchmark: true
 
 validation:
   run_for_training_pass_only: true
@@ -62,4 +68,3 @@ deduplication:
   methods: [pearson, spearman]
   manual_confirmation: true
   archive_instead_of_delete: true
-
