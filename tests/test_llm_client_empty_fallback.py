@@ -142,6 +142,25 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
                 {},
             )
 
+    def test_tag_specific_openai_endpoint_keeps_gpt_model_under_deepseek_default(self):
+        api = object.__new__(APIBackend)
+        api.base_url = "https://api.deepseek.com"
+        api.chat_api_base = ""
+
+        self.assertEqual(
+            api._coerce_provider_model("gpt-5.5", "https://api.openai.com/v1"),
+            "gpt-5.5",
+        )
+        self.assertEqual(
+            api._build_provider_kwargs(
+                model="gpt-5.5",
+                reasoning_flag=False,
+                tag="AlphaAgentHypothesis2FactorExpression",
+                endpoint="https://api.openai.com/v1",
+            ),
+            {},
+        )
+
     def test_deepseek_v4_flash_empty_stream_raises_without_fallback(self):
         api = object.__new__(APIBackend)
         api.use_chat_cache = False
@@ -151,9 +170,12 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
         api.chat_model = "deepseek-v4-flash"
         api.reasoning_model = "deepseek-v4-flash"
         api.chat_model_map = {}
+        api.chat_base_url_map = {}
+        api.chat_api_key_map = {}
         api.chat_stream = True
         api.chat_seed = None
         api.base_url = "https://api.deepseek.com"
+        api.chat_api_key = "test-key"
         api.chat_client = _FakeChatClient()
 
         with TemporaryDirectory() as tmpdir:

@@ -331,21 +331,46 @@ class APIBackend:
 
     _OPENAI_DEFAULT_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4")
 
-    def _is_deepseek_endpoint(self) -> bool:
-        endpoint = self.base_url or getattr(self, "chat_api_base", "") or ""
+    @staticmethod
+    def _parse_json_map(raw: str | None, *, setting_name: str) -> dict[str, str]:
+        if not raw:
+            return {}
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{setting_name} must be a valid JSON object") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{setting_name} must be a valid JSON object")
+        return {str(key): str(item) for key, item in value.items() if item is not None and str(item).strip()}
+
+    def _is_deepseek_endpoint(self, endpoint: str | None = None) -> bool:
+        endpoint = endpoint if endpoint is not None else (self.base_url or getattr(self, "chat_api_base", "") or "")
         return "deepseek" in endpoint.lower()
 
-    def _coerce_provider_model(self, model: str | None) -> str:
+    def _coerce_provider_model(self, model: str | None, endpoint: str | None = None) -> str:
         selected = (model or "").strip()
-        if not self._is_deepseek_endpoint():
+        if not self._is_deepseek_endpoint(endpoint):
             return selected
 
         if not selected or selected.startswith(self._OPENAI_DEFAULT_MODEL_PREFIXES):
             return (os.environ.get("CHAT_MODEL") or "deepseek-v4-flash").strip()
         return selected
 
-    def _build_provider_kwargs(self, *, model: str, reasoning_flag: bool, tag: str) -> dict[str, Any]:
-        if not self._is_deepseek_endpoint() or model == "deepseek-reasoner":
+    def _tag_chat_base_url(self, tag: str) -> str | None:
+        return self.chat_base_url_map.get(tag) or self.base_url
+
+    def _tag_chat_api_key(self, tag: str) -> str | None:
+        return self.chat_api_key_map.get(tag) or self.chat_api_key
+
+    def _chat_client_for_request(self, *, tag: str, base_url: str | None, api_key: str | None):
+        if getattr(self, "use_azure", False) or (
+            self.chat_base_url_map.get(tag) is None and self.chat_api_key_map.get(tag) is None
+        ):
+            return self.chat_client
+        return openai.OpenAI(api_key=api_key, base_url=base_url)
+
+    def _build_provider_kwargs(self, *, model: str, reasoning_flag: bool, tag: str, endpoint: str | None = None) -> dict[str, Any]:
+        if not self._is_deepseek_endpoint(endpoint) or model == "deepseek-reasoner":
             return {}
 
         if LLM_SETTINGS.deepseek_disable_thinking:
@@ -503,7 +528,15 @@ class APIBackend:
             self.gcr_endpoint_max_token = LLM_SETTINGS.gcr_endpoint_max_token
             if not os.environ.get("PYTHONHTTPSVERIFY", "") and hasattr(ssl, "_create_unverified_context"):
                 ssl._create_default_https_context = ssl._create_unverified_context  # noqa: SLF001
-            self.chat_model_map = json.loads(LLM_SETTINGS.chat_model_map)
+            self.chat_model_map = self._parse_json_map(LLM_SETTINGS.chat_model_map, setting_name="CHAT_MODEL_MAP")
+            self.chat_base_url_map = self._parse_json_map(
+                LLM_SETTINGS.chat_base_url_map,
+                setting_name="CHAT_BASE_URL_MAP",
+            )
+            self.chat_api_key_map = self._parse_json_map(
+                LLM_SETTINGS.chat_api_key_map,
+                setting_name="CHAT_API_KEY_MAP",
+            )
             self.chat_model = LLM_SETTINGS.chat_model if chat_model is None else chat_model
             self.encoder = None
         else:
@@ -543,11 +576,23 @@ class APIBackend:
             )
             
 
-            self.chat_model = self._coerce_provider_model(LLM_SETTINGS.chat_model if chat_model is None else chat_model)
-            self.reasoning_model = self._coerce_provider_model(
-                LLM_SETTINGS.reasoning_model if reasoning_model is None else reasoning_model
+            self.chat_model = self._coerce_provider_model(
+                LLM_SETTINGS.chat_model if chat_model is None else chat_model,
+                self.base_url,
             )
-            self.chat_model_map = json.loads(LLM_SETTINGS.chat_model_map)
+            self.reasoning_model = self._coerce_provider_model(
+                LLM_SETTINGS.reasoning_model if reasoning_model is None else reasoning_model,
+                self.base_url,
+            )
+            self.chat_model_map = self._parse_json_map(LLM_SETTINGS.chat_model_map, setting_name="CHAT_MODEL_MAP")
+            self.chat_base_url_map = self._parse_json_map(
+                LLM_SETTINGS.chat_base_url_map,
+                setting_name="CHAT_BASE_URL_MAP",
+            )
+            self.chat_api_key_map = self._parse_json_map(
+                LLM_SETTINGS.chat_api_key_map,
+                setting_name="CHAT_API_KEY_MAP",
+            )
             # self.encoder = self._get_encoder()
             
             self.chat_api_base = LLM_SETTINGS.chat_azure_api_base if chat_api_base is None else chat_api_base
@@ -915,11 +960,15 @@ class APIBackend:
         else:
             tag = inspect.stack()[4].function
             
+        request_base_url = self.base_url
+        request_api_key = self.chat_api_key
         if reasoning_flag:
-            model = self._coerce_provider_model(self.reasoning_model)
+            model = self._coerce_provider_model(self.reasoning_model, request_base_url)
             json_mode = None
         else:
-            model = self._coerce_provider_model(self.chat_model_map.get(tag, self.chat_model))
+            request_base_url = self._tag_chat_base_url(tag)
+            request_api_key = self._tag_chat_api_key(tag)
+            model = self._coerce_provider_model(self.chat_model_map.get(tag, self.chat_model), request_base_url)
 
         finish_reason = None
         if self.use_llama2:
@@ -963,7 +1012,14 @@ class APIBackend:
                 frequency_penalty=frequency_penalty,
                 presence_penalty=presence_penalty,
             )
-            kwargs.update(self._build_provider_kwargs(model=model, reasoning_flag=reasoning_flag, tag=tag))
+            kwargs.update(
+                self._build_provider_kwargs(
+                    model=model,
+                    reasoning_flag=reasoning_flag,
+                    tag=tag,
+                    endpoint=request_base_url,
+                )
+            )
             
             if json_mode:
                 if add_json_in_prompt:
@@ -972,8 +1028,13 @@ class APIBackend:
                         if message["role"] == "system":
                             break
                 kwargs["response_format"] = {"type": "json_object"}
+            request_client = self._chat_client_for_request(
+                tag=tag,
+                base_url=request_base_url,
+                api_key=request_api_key,
+            )
             def collect_response(call_kwargs: dict) -> tuple[str, str | None, Any, str]:
-                response = self.chat_client.chat.completions.create(**call_kwargs)
+                response = request_client.chat.completions.create(**call_kwargs)
                 call_finish_reason = None
                 if call_kwargs.get("stream"):
                     text = ""

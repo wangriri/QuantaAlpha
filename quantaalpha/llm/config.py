@@ -66,6 +66,8 @@ class LLMSettings(ExtendedBaseSettings):
     use_gcr_endpoint: bool = False
 
     chat_model_map: str = "{}"
+    chat_base_url_map: str = "{}"
+    chat_api_key_map: str = "{}"
 
 
 LLM_SETTINGS = LLMSettings()
