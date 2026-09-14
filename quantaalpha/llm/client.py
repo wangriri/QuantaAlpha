@@ -335,8 +335,11 @@ class APIBackend:
     def _parse_json_map(raw: str | None, *, setting_name: str) -> dict[str, str]:
         if not raw:
             return {}
+        normalized = raw.strip()
+        while len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {"'", '"'}:
+            normalized = normalized[1:-1].strip()
         try:
-            value = json.loads(raw)
+            value = json.loads(normalized)
         except json.JSONDecodeError as exc:
             raise ValueError(f"{setting_name} must be a valid JSON object") from exc
         if not isinstance(value, dict):

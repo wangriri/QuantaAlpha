@@ -91,6 +91,15 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
             self.assertEqual(api._coerce_provider_model(""), "deepseek-v4-flash")
             self.assertEqual(api._coerce_provider_model("deepseek-chat"), "deepseek-chat")
 
+    def test_json_map_parser_accepts_dotenv_quoted_json(self):
+        self.assertEqual(
+            APIBackend._parse_json_map(
+                '\'{"AlphaAgentHypothesis2FactorExpression":"gpt-5.5"}\'',
+                setting_name="QA_CHAT_MODEL_MAP",
+            ),
+            {"AlphaAgentHypothesis2FactorExpression": "gpt-5.5"},
+        )
+
     def test_deepseek_endpoint_uses_configured_chat_model_for_openai_default(self):
         api = object.__new__(APIBackend)
         api.base_url = "https://api.deepseek.com"
