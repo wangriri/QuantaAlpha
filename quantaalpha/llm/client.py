@@ -528,14 +528,17 @@ class APIBackend:
             self.gcr_endpoint_max_token = LLM_SETTINGS.gcr_endpoint_max_token
             if not os.environ.get("PYTHONHTTPSVERIFY", "") and hasattr(ssl, "_create_unverified_context"):
                 ssl._create_default_https_context = ssl._create_unverified_context  # noqa: SLF001
-            self.chat_model_map = self._parse_json_map(LLM_SETTINGS.chat_model_map, setting_name="CHAT_MODEL_MAP")
+            self.chat_model_map = self._parse_json_map(
+                LLM_SETTINGS.qa_chat_model_map or LLM_SETTINGS.chat_model_map,
+                setting_name="QA_CHAT_MODEL_MAP",
+            )
             self.chat_base_url_map = self._parse_json_map(
-                LLM_SETTINGS.chat_base_url_map,
-                setting_name="CHAT_BASE_URL_MAP",
+                LLM_SETTINGS.qa_chat_base_url_map or LLM_SETTINGS.chat_base_url_map,
+                setting_name="QA_CHAT_BASE_URL_MAP",
             )
             self.chat_api_key_map = self._parse_json_map(
-                LLM_SETTINGS.chat_api_key_map,
-                setting_name="CHAT_API_KEY_MAP",
+                LLM_SETTINGS.qa_chat_api_key_map or LLM_SETTINGS.chat_api_key_map,
+                setting_name="QA_CHAT_API_KEY_MAP",
             )
             self.chat_model = LLM_SETTINGS.chat_model if chat_model is None else chat_model
             self.encoder = None
@@ -584,14 +587,17 @@ class APIBackend:
                 LLM_SETTINGS.reasoning_model if reasoning_model is None else reasoning_model,
                 self.base_url,
             )
-            self.chat_model_map = self._parse_json_map(LLM_SETTINGS.chat_model_map, setting_name="CHAT_MODEL_MAP")
+            self.chat_model_map = self._parse_json_map(
+                LLM_SETTINGS.qa_chat_model_map or LLM_SETTINGS.chat_model_map,
+                setting_name="QA_CHAT_MODEL_MAP",
+            )
             self.chat_base_url_map = self._parse_json_map(
-                LLM_SETTINGS.chat_base_url_map,
-                setting_name="CHAT_BASE_URL_MAP",
+                LLM_SETTINGS.qa_chat_base_url_map or LLM_SETTINGS.chat_base_url_map,
+                setting_name="QA_CHAT_BASE_URL_MAP",
             )
             self.chat_api_key_map = self._parse_json_map(
-                LLM_SETTINGS.chat_api_key_map,
-                setting_name="CHAT_API_KEY_MAP",
+                LLM_SETTINGS.qa_chat_api_key_map or LLM_SETTINGS.chat_api_key_map,
+                setting_name="QA_CHAT_API_KEY_MAP",
             )
             # self.encoder = self._get_encoder()
             
