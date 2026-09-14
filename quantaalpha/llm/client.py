@@ -926,6 +926,7 @@ class APIBackend:
         json_mode: bool = False,
         add_json_in_prompt: bool = False,
         seed: Optional[int] = None,
+        tag: str | None = None,
     ) -> str:
         """
         seed : Optional[int]
@@ -961,13 +962,14 @@ class APIBackend:
         if presence_penalty is None:
             presence_penalty = LLM_SETTINGS.chat_presence_penalty
 
-        # Use index 4 to skip the current function and intermediate calls,
-        # and get the locals of the caller's frame.
-        caller_locals = inspect.stack()[4].frame.f_locals
-        if "self" in caller_locals:
-            tag = caller_locals["self"].__class__.__name__
-        else:
-            tag = inspect.stack()[4].function
+        if tag is None:
+            # Use index 4 to skip the current function and intermediate calls,
+            # and get the locals of the caller's frame.
+            caller_locals = inspect.stack()[4].frame.f_locals
+            if "self" in caller_locals:
+                tag = caller_locals["self"].__class__.__name__
+            else:
+                tag = inspect.stack()[4].function
             
         request_base_url = self.base_url
         request_api_key = self.chat_api_key

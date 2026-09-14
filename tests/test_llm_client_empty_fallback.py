@@ -201,6 +201,38 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
             {},
         )
 
+    def test_explicit_tag_routes_chat_completion_to_tag_provider(self):
+        api = object.__new__(APIBackend)
+        api.use_chat_cache = False
+        api.dump_chat_cache = False
+        api.use_llama2 = False
+        api.use_gcr_endpoint = False
+        api.use_azure = False
+        api.chat_model = "deepseek-v4-flash"
+        api.reasoning_model = "deepseek-v4-flash"
+        api.chat_model_map = {"AlphaAgentHypothesis2FactorExpression": "gpt-5.5"}
+        api.chat_base_url_map = {"AlphaAgentHypothesis2FactorExpression": "https://proxy.example/v1"}
+        api.chat_api_key_map = {"AlphaAgentHypothesis2FactorExpression": "tag-key"}
+        api.chat_stream = False
+        api.chat_seed = None
+        api.base_url = "https://api.deepseek.com"
+        api.chat_api_key = "default-key"
+        api.chat_client = _FakeChatClient()
+        tag_client = _FakeChatClient()
+
+        with patch("quantaalpha.llm.client.openai.OpenAI", return_value=tag_client):
+            resp, finish_reason = api._create_chat_completion_inner_function(
+                [{"role": "user", "content": "return JSON"}],
+                reasoning_flag=False,
+                json_mode=False,
+                tag="AlphaAgentHypothesis2FactorExpression",
+            )
+
+        self.assertEqual(resp, '{"ok": true}')
+        self.assertEqual(finish_reason, "stop")
+        self.assertEqual(len(api.chat_client.chat.completions.calls), 0)
+        self.assertEqual(tag_client.chat.completions.calls[0]["model"], "gpt-5.5")
+
     def test_deepseek_v4_flash_empty_stream_raises_without_fallback(self):
         api = object.__new__(APIBackend)
         api.use_chat_cache = False
