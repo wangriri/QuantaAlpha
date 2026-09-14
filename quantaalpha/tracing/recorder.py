@@ -484,6 +484,7 @@ class TaskRecorder:
                 "source_phase": phase_value,
             },
         )
+
         parents = []
         for parent in self.task.get("parent_trajectories", []) or []:
             parents.append(
@@ -515,6 +516,52 @@ class TaskRecorder:
         if crossover_trace:
             self.write_agent_output("02_crossover_prompt.json", "CrossoverAgent", crossover_trace, prompt_only=True)
             self.write_agent_output("03_crossover_output.json", "CrossoverAgent", crossover_trace)
+
+    def write_failure(self, error: str, traceback_text: str | None = None, latest_step: str | None = None) -> None:
+        task_file = self.run.run_dir / self.rel("00_task.json")
+        task_payload: dict[str, Any] = {}
+        if task_file.exists():
+            try:
+                task_payload = json.loads(task_file.read_text(encoding="utf-8"))
+            except Exception:
+                task_payload = {}
+        task_payload.update(
+            {
+                "schema_version": RunRecorder.schema_version,
+                "run_id": self.run.run_id,
+                "task_id": self.task_id,
+                "round_idx": self.round_idx,
+                "phase": self.phase,
+                "task_index": self.task_index,
+                "status": "failed",
+                "error": error,
+                "failed_at": now_iso(),
+            }
+        )
+        self.write_json("00_task.json", task_payload)
+        self.write_json(
+            "99_failure.json",
+            {
+                "schema_version": RunRecorder.schema_version,
+                "run_id": self.run.run_id,
+                "task_id": self.task_id,
+                "status": "failed",
+                "latest_step": latest_step,
+                "error": error,
+                "traceback": traceback_text,
+                "created_at": now_iso(),
+            },
+        )
+        self.run.add_node(
+            self.task_id,
+            "task",
+            f"{self.phase} task {self.task_index:03d}",
+            self.rel("00_task.json"),
+            status="failed",
+            phase=self.phase,
+            round_idx=self.round_idx,
+            error=error,
+        )
 
     def write_alpha_loop_index(self, loop: Any, latest_step: str | None = None) -> None:
         self.write_json(

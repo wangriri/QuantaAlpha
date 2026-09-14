@@ -507,6 +507,7 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                 system_prompt,
                 json_mode=json_flag,
                 reasoning_flag=False,
+                tag=self.__class__.__name__,
             )
             final_response = resp
             attempt_record = {

@@ -21,6 +21,7 @@ import time
 import ctypes
 import os
 import pickle
+import traceback
 from quantaalpha.pipeline.settings import ALPHA_AGENT_FACTOR_PROP_SETTING
 from quantaalpha.pipeline.planning import generate_parallel_directions
 from quantaalpha.pipeline.planning import generate_parallel_directions_with_trace
@@ -195,28 +196,51 @@ def _run_evolution_task(
         run_recorder.write_round_summary(round_idx, phase.value, [task])
         task_recorder = run_recorder.task_recorder(task, direction=direction)
 
-    # Create and run loop
-    model_loop = AlphaAgentLoop(
-        ALPHA_AGENT_FACTOR_PROP_SETTING,
-        potential_direction=direction,
-        stop_event=stop_event,
-        use_local=use_local,
-        strategy_suffix=strategy_suffix,
-        evolution_phase=phase.value,
-        trajectory_id=trajectory_id,
-        parent_trajectory_ids=parent_ids,
-        direction_id=direction_id,
-        round_idx=round_idx,
-        quality_gate_config=quality_gate_cfg or {},
-        backtest_timeout=backtest_timeout,
-        task_recorder=task_recorder,
-    )
-    model_loop.user_initial_direction = user_direction
-    
-    # Run one small loop (5 steps)
-    model_loop.run(step_n=step_n, stop_event=stop_event)
+    model_loop = None
+    try:
+        # Create and run loop
+        model_loop = AlphaAgentLoop(
+            ALPHA_AGENT_FACTOR_PROP_SETTING,
+            potential_direction=direction,
+            stop_event=stop_event,
+            use_local=use_local,
+            strategy_suffix=strategy_suffix,
+            evolution_phase=phase.value,
+            trajectory_id=trajectory_id,
+            parent_trajectory_ids=parent_ids,
+            direction_id=direction_id,
+            round_idx=round_idx,
+            quality_gate_config=quality_gate_cfg or {},
+            backtest_timeout=backtest_timeout,
+            task_recorder=task_recorder,
+        )
+        model_loop.user_initial_direction = user_direction
 
-    traj_data = model_loop._get_trajectory_data()
+        # Run one small loop (5 steps)
+        model_loop.run(step_n=step_n, stop_event=stop_event)
+        traj_data = model_loop._get_trajectory_data()
+        missing_outputs = [
+            name
+            for name in ("hypothesis", "experiment", "feedback")
+            if traj_data.get(name) is None
+        ]
+        if missing_outputs:
+            latest_step = None
+            if task_recorder is not None:
+                latest_step = f"loop_idx={getattr(model_loop, 'loop_idx', None)}, step_idx={getattr(model_loop, 'step_idx', None)}"
+            raise RuntimeError(
+                "Evolution task produced no complete trajectory "
+                f"(missing: {', '.join(missing_outputs)}; {latest_step or 'step unknown'})."
+            )
+    except Exception as exc:
+        if task_recorder is not None:
+            latest_step = None
+            if model_loop is not None:
+                latest_step = f"loop_idx={getattr(model_loop, 'loop_idx', None)}, step_idx={getattr(model_loop, 'step_idx', None)}"
+            task_recorder.write_failure(str(exc), traceback.format_exc(), latest_step=latest_step)
+            RunRecorder.open(trace_run_dir).flush_graph(status="running")
+        raise
+
     traj_data["task"] = task
     if trace_run_dir:
         RunRecorder.open(trace_run_dir).flush_graph(status="running")
@@ -582,6 +606,8 @@ def run_evolution_loop(
         logger.info(f"  {i+1}. {t.trajectory_id}: phase={t.phase.value}, RankIC={metric_str}")
     logger.info(f"Pool stats: {controller.pool.get_statistics()}")
     logger.info("="*60)
+    if not controller.pool.get_all():
+        raise RuntimeError("Evolution produced no successful trajectories; all tasks failed or were skipped.")
     if cleanup_on_finish:
         logger.info("Cleaning up trajectory pool file...")
         controller.pool.cleanup_file()

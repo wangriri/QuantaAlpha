@@ -1,4 +1,5 @@
 import unittest
+import ast
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -50,6 +51,36 @@ class _FakeChatClient:
 
 
 class LLMClientEmptyFallbackTest(unittest.TestCase):
+    def test_factor_expression_generation_passes_class_tag_to_llm(self):
+        source = Path("quantaalpha/factors/proposal.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        target_class = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "AlphaAgentHypothesis2FactorExpression"
+        )
+        calls = [
+            node
+            for node in ast.walk(target_class)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "build_messages_and_create_chat_completion"
+        ]
+        self.assertTrue(calls)
+        self.assertTrue(
+            any(
+                any(
+                    kw.arg == "tag"
+                    and isinstance(kw.value, ast.Attribute)
+                    and kw.value.attr == "__name__"
+                    and isinstance(kw.value.value, ast.Attribute)
+                    and kw.value.value.attr == "__class__"
+                    for kw in call.keywords
+                )
+                for call in calls
+            )
+        )
+
     def test_deepseek_endpoint_coerces_openai_default_model_names(self):
         api = object.__new__(APIBackend)
         api.base_url = "https://api.deepseek.com"
