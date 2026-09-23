@@ -12,6 +12,8 @@ import type {
   Task,
   TacticalAnalyzeResponse,
   TacticalConfig,
+  TacticalGroupTestResponse,
+  TacticalGroupTestSummary,
   TraceArtifact,
   TraceDetail,
   TraceRunSummary,
@@ -271,6 +273,29 @@ export async function analyzeTacticalFactors(library: string) {
   return request<TacticalAnalyzeResponse>('/api/v1/tactical/analyze', {
     method: 'POST',
     body: JSON.stringify({ library }),
+  });
+}
+
+export async function testTacticalFactorGroup(library: string, factorIds: string[], groupMetrics?: {
+  averageCorrelation?: number | null;
+  minPairCorrelation?: number | null;
+  minOverlapDays?: number | null;
+}) {
+  return request<TacticalGroupTestResponse>('/api/v1/tactical/group-test', {
+    method: 'POST',
+    body: JSON.stringify({ library, factorIds, ...groupMetrics }),
+  });
+}
+
+export async function listTacticalGroupTests(library: string) {
+  const qs = new URLSearchParams({ library });
+  return request<{ tests: TacticalGroupTestSummary[] }>(`/api/v1/tactical/group-tests?${qs.toString()}`);
+}
+
+export async function getSavedTacticalGroupTest(library: string, factorIds: string[]) {
+  return request<TacticalGroupTestResponse>('/api/v1/tactical/group-test/saved', {
+    method: 'POST',
+    body: JSON.stringify({ library, factorIds }),
   });
 }
 

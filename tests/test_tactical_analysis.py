@@ -95,6 +95,112 @@ class TacticalAnalysisTest(unittest.TestCase):
         self.assertEqual(result["summary"]["analyzed"], 5)
         self.assertGreater(result["factors"][0]["training"]["score"], 0)
 
+    def test_return_correlation_flags_duplicate_performance_paths(self):
+        base = [0.01, -0.02, 0.03, 0.00, 0.02, -0.01]
+        result = TacticalFactorAnalyzer({**_config(), "min_return_correlation_overlap": 12}).analyze_factors([
+            {
+                "factorId": "left",
+                "factorName": "Left",
+                "training_excess": _frame(base, days=12),
+            },
+            {
+                "factorId": "right",
+                "factorName": "Right",
+                "training_excess": _frame(base, days=12),
+            },
+            {
+                "factorId": "other",
+                "factorName": "Other",
+                "training_excess": _frame([0.00, 0.01, -0.01, 0.02, -0.02, 0.01], days=12),
+            },
+        ])
+
+        summary = result["summary"]["returnCorrelation"]["training"]
+        factors = {factor["factorId"]: factor for factor in result["factors"]}
+
+        self.assertEqual(summary["highPairCount"], 1)
+        self.assertEqual(summary["duplicateLikePairCount"], 1)
+        self.assertAlmostEqual(factors["left"]["training"]["returnCorrelation"]["maxCorrelation"], 1.0)
+        self.assertEqual(factors["left"]["training"]["returnCorrelation"]["maxPeerFactorId"], "right")
+        self.assertEqual(factors["left"]["training"]["returnCorrelation"]["duplicateLikeCount"], 1)
+
+    def test_return_correlation_finds_five_factor_groups_by_average_correlation(self):
+        base = [0.01, -0.02, 0.03, 0.00, 0.02, -0.01]
+        records = [
+            {
+                "factorId": f"cluster_{index}",
+                "factorName": f"Cluster {index}",
+                "training_excess": _frame(base, days=12),
+            }
+            for index in range(5)
+        ]
+        records.append({
+            "factorId": "other",
+            "factorName": "Other",
+            "training_excess": _frame([-0.01, 0.02, -0.03, 0.01, -0.02, 0.00], days=12),
+        })
+
+        result = TacticalFactorAnalyzer({
+            **_config(),
+            "min_return_correlation_overlap": 12,
+            "return_correlation_group_size": 5,
+            "return_correlation_group_avg_threshold": 0.7,
+        }).analyze_factors(records)
+
+        groups = result["summary"]["returnCorrelation"]["training"]["groups"]
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["factorIds"], [f"cluster_{index}" for index in range(5)])
+        self.assertAlmostEqual(groups[0]["averageCorrelation"], 1.0)
+        self.assertEqual(groups[0]["pairCount"], 10)
+
+    def test_return_correlation_group_requires_positive_single_factor_annualized_excess(self):
+        positive = [0.04, -0.01, 0.03, -0.01, 0.02, -0.01]
+        negative = [value - 0.02 for value in positive]
+        records = [
+            {
+                "factorId": f"positive_{index}",
+                "factorName": f"Positive {index}",
+                "training_excess": _frame(positive, days=12),
+            }
+            for index in range(4)
+        ]
+        records.append({
+            "factorId": "negative",
+            "factorName": "Negative",
+            "training_excess": _frame(negative, days=12),
+        })
+
+        result = TacticalFactorAnalyzer({
+            **_config(),
+            "min_return_correlation_overlap": 12,
+            "return_correlation_group_size": 5,
+            "return_correlation_group_avg_threshold": 0.7,
+        }).analyze_factors(records)
+
+        summary = result["summary"]["returnCorrelation"]["training"]
+
+        self.assertGreater(summary["highPairCount"], 0)
+        self.assertEqual(summary["groups"], [])
+        self.assertEqual(summary["groupEligibleFactorCount"], 4)
+        self.assertEqual(summary["groupExcludedNonPositiveAnnualizedCount"], 1)
+
+    def test_factor_value_group_correlation_uses_cross_sectional_factor_values(self):
+        dates = pd.to_datetime(["2025-01-01", "2025-01-02"])
+        rows = []
+        for date in dates:
+            for code, value in [("000001", 1.0), ("000002", 2.0), ("000003", 3.0), ("000004", 4.0)]:
+                rows.append({"factor_date": date, "code": code, "factor_value": value})
+        base = pd.DataFrame(rows)
+        frames = {f"factor_{index}": base.copy() for index in range(5)}
+        factors = [{"factorId": f"factor_{index}", "factorName": f"Factor {index}"} for index in range(5)]
+
+        result = TacticalFactorAnalyzer(_config())._factor_value_group_correlation(factors, frames)
+
+        self.assertEqual(result["pairCount"], 10)
+        self.assertAlmostEqual(result["averagePearson"], 1.0)
+        self.assertAlmostEqual(result["averageSpearman"], 1.0)
+
     def test_missing_training_artifact_is_skipped(self):
         result = TacticalFactorAnalyzer(_config()).analyze_factors([
             {"factorId": "missing", "factorName": "Missing"},

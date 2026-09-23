@@ -1,5 +1,5 @@
 import React from 'react';
-import { Workflow } from 'lucide-react';
+import { Square, Workflow } from 'lucide-react';
 import { ProgressSidebar } from '@/components/ProgressSidebar';
 import { LiveCharts } from '@/components/LiveCharts';
 import { ChatInput } from '@/components/ChatInput';
@@ -49,7 +49,17 @@ export const MiningDashboardPage: React.FC<MiningDashboardPageProps> = ({ onNavi
       onNavigate={onNavigate || (() => {})}
       showNavigation={!!onNavigate}
     >
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex flex-wrap justify-end gap-2">
+        {task.status === 'running' && (
+          <button
+            onClick={stopMining}
+            className="flex items-center gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-500 hover:text-white"
+            title="停止当前挖掘任务"
+          >
+            <Square className="h-4 w-4" />
+            停止任务
+          </button>
+        )}
         <button
           onClick={() => {
             const runId = task.traceRunId || task.config?.traceRunId;

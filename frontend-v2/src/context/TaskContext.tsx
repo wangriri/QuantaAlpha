@@ -93,6 +93,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const miningWsRef = useRef<WebSocket | null>(null);
   const miningPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const miningMockTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const miningDataPointsRef = useRef(0);
 
   // Chart data helper
@@ -127,7 +128,12 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
         switch (msg.type) {
           case 'progress':
             updated.progress = msg.data;
-            updated.status = msg.data.phase === 'completed' ? 'completed' : 'running';
+            updated.status =
+              msg.data.phase === 'completed'
+                ? 'completed'
+                : msg.data.phase === 'cancelled'
+                ? 'cancelled'
+                : 'running';
             if (['backtesting', 'analyzing', 'completed'].includes(msg.data.phase)) {
               pushMiningDataPoint();
             }
@@ -196,7 +202,20 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
             };
             break;
           case 'result':
-            updated.status = msg.data.status === 'completed' ? 'completed' : 'failed';
+            updated.status =
+              msg.data.status === 'completed' ||
+              msg.data.status === 'failed' ||
+              msg.data.status === 'cancelled'
+                ? msg.data.status
+                : 'failed';
+            if (updated.status === 'cancelled') {
+              updated.progress = {
+                ...updated.progress,
+                phase: 'cancelled' as any,
+                message: '任务已停止',
+                timestamp: new Date().toISOString(),
+              };
+            }
             if (msg.data.metrics) updated.metrics = msg.data.metrics;
             break;
           case 'trace':
@@ -297,7 +316,19 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const r = await getMiningStatus(resp.data!.taskId);
             if (r.data?.task) {
               const t = r.data.task as Task;
-              if (t.status === 'completed' || t.status === 'failed') {
+              setMiningTask((prev) => {
+                if (!prev) return t;
+                return {
+                  ...prev,
+                  status: t.status,
+                  progress: t.progress || prev.progress,
+                  metrics: (t.metrics && Object.keys(t.metrics).length > 0) ? t.metrics : prev.metrics,
+                  traceRunId: t.traceRunId || prev.traceRunId,
+                  traceDir: t.traceDir || prev.traceDir,
+                  updatedAt: t.updatedAt,
+                };
+              });
+              if (t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled') {
                 setMiningTask(t);
                 clearInterval(miningPollingRef.current!);
                 miningPollingRef.current = null;
@@ -340,6 +371,10 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMiningDrawdownCurve([]);
       setMiningIcTimeSeries([]);
       miningDataPointsRef.current = 0;
+      if (miningMockTimerRef.current) {
+        clearInterval(miningMockTimerRef.current);
+        miningMockTimerRef.current = null;
+      }
 
       const phases = ['parsing', 'planning', 'evolving', 'backtesting', 'analyzing', 'completed'] as const;
       let phaseIdx = 0;
@@ -415,8 +450,12 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
         });
 
-        if (phase === 'completed') clearInterval(interval);
+        if (phase === 'completed') {
+          clearInterval(interval);
+          miningMockTimerRef.current = null;
+        }
       }, 300);
+      miningMockTimerRef.current = interval;
     },
     [pushMiningDataPoint],
   );
@@ -442,6 +481,10 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
       clearInterval(miningPollingRef.current);
       miningPollingRef.current = null;
     }
+    if (miningMockTimerRef.current) {
+      clearInterval(miningMockTimerRef.current);
+      miningMockTimerRef.current = null;
+    }
     if (backendAvailable) {
       try {
         await apiCancelMining(miningTask.taskId);
@@ -449,7 +492,21 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // ignore
       }
     }
-    setMiningTask((prev) => (prev ? { ...prev, status: 'failed' } : prev));
+    setMiningTask((prev) => (
+      prev
+        ? {
+            ...prev,
+            status: 'cancelled',
+            progress: {
+              ...prev.progress,
+              phase: 'cancelled' as any,
+              message: '任务已停止',
+              timestamp: new Date().toISOString(),
+            },
+            updatedAt: new Date().toISOString(),
+          }
+        : prev
+    ));
   }, [miningTask, backendAvailable]);
 
   // Reset mining task
@@ -460,6 +517,10 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (miningPollingRef.current) {
       clearInterval(miningPollingRef.current);
       miningPollingRef.current = null;
+    }
+    if (miningMockTimerRef.current) {
+      clearInterval(miningMockTimerRef.current);
+      miningMockTimerRef.current = null;
     }
     setMiningTask(null);
     setMiningEquityCurve([]);

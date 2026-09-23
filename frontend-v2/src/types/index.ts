@@ -163,6 +163,12 @@ export interface TacticalConfig {
   severe_drawdown_quantile: number;
   min_positive_month_ratio: number;
   min_burst_month_count: number;
+  high_return_correlation_threshold: number;
+  duplicate_return_correlation_threshold: number;
+  min_return_correlation_overlap: number;
+  return_correlation_group_size: number;
+  return_correlation_group_avg_threshold: number;
+  max_return_correlation_groups: number;
 }
 
 export interface TacticalPeriodMetrics {
@@ -176,6 +182,8 @@ export interface TacticalPeriodMetrics {
   burst_month_count?: number;
   burst_month_ratio?: number | null;
   recent_3m_excess?: number | null;
+  annualized_excess_return?: number | null;
+  daily_excess_count?: number;
   best_month_percentile?: number | null;
   volatility_percentile?: number | null;
   worst_month_percentile?: number | null;
@@ -198,6 +206,177 @@ export interface TacticalPeriodResult {
   burstMonths: TacticalMonthlyPoint[];
   reasons: string[];
   thresholds: Record<string, number | null>;
+  returnCorrelation: TacticalFactorReturnCorrelation;
+}
+
+export interface TacticalReturnCorrelationPeer {
+  factorId: string;
+  factorName: string;
+  correlation: number;
+  overlapDays: number;
+  maxAbsDiff?: number | null;
+  duplicateLike: boolean;
+}
+
+export interface TacticalFactorReturnCorrelation {
+  maxCorrelation?: number | null;
+  maxPeerFactorId?: string | null;
+  maxPeerFactorName?: string | null;
+  highCorrelationCount: number;
+  duplicateLikeCount: number;
+  peers: TacticalReturnCorrelationPeer[];
+}
+
+export interface TacticalReturnCorrelationPair {
+  period: 'training' | 'validation' | string;
+  factorId: string;
+  factorName: string;
+  peerFactorId: string;
+  peerFactorName: string;
+  correlation: number;
+  overlapDays: number;
+  maxAbsDiff?: number | null;
+  duplicateLike: boolean;
+}
+
+export interface TacticalReturnCorrelationSummary {
+  threshold: number;
+  duplicateThreshold: number;
+  minOverlapDays: number;
+  highPairCount: number;
+  duplicateLikePairCount: number;
+  maxCorrelation?: number | null;
+  pairs: TacticalReturnCorrelationPair[];
+  groups: TacticalReturnCorrelationGroup[];
+  groupSize: number;
+  groupAvgThreshold: number;
+  groupPositiveAnnualizedFilter?: boolean;
+  groupEligibleFactorCount?: number;
+  groupExcludedNonPositiveAnnualizedCount?: number;
+}
+
+export interface TacticalReturnCorrelationGroup {
+  period: 'training' | 'validation' | string;
+  factorIds: string[];
+  factorNames: string[];
+  averageCorrelation: number;
+  minPairCorrelation?: number | null;
+  minOverlapDays?: number | null;
+  pairCount: number;
+  pairs: Array<{
+    factorId: string;
+    peerFactorId: string;
+    factorName: string;
+    peerFactorName: string;
+    correlation: number;
+    overlapDays: number;
+  }>;
+}
+
+export interface TacticalGroupFactorValueCorrelation {
+  groupSize: number;
+  pairCount: number;
+  averagePearson?: number | null;
+  averageSpearman?: number | null;
+  minPearson?: number | null;
+  minSpearman?: number | null;
+  pairs: Array<{
+    factorId: string;
+    factorName: string;
+    peerFactorId: string;
+    peerFactorName: string;
+    pearson?: number | null;
+    spearman?: number | null;
+    overlapDays: number;
+    medianStocks?: number | null;
+  }>;
+}
+
+export interface TacticalGroupReturnMetrics {
+  valid_months: number;
+  total_excess?: number | null;
+  mean_monthly_excess?: number | null;
+  monthly_excess_std?: number | null;
+  best_month_excess?: number | null;
+  worst_month_excess?: number | null;
+  max_monthly_drawdown?: number | null;
+  excess_sharpe?: number | null;
+}
+
+export interface TacticalGroupComponentResult {
+  factorId: string;
+  factorName: string;
+  metrics: TacticalGroupReturnMetrics;
+  monthly: TacticalMonthlyPoint[];
+}
+
+export interface TacticalGroupStrategyPeriod {
+  metrics: TacticalGroupReturnMetrics;
+  evaluationMetrics: Record<string, any>;
+  monthly: TacticalMonthlyPoint[];
+  components: TacticalGroupComponentResult[];
+  comparison: {
+    componentAverage: TacticalGroupReturnMetrics;
+    deltas: Record<string, number | null>;
+    summary: string[];
+  };
+}
+
+export interface TacticalGroupTestResponse {
+  library: string;
+  factorIds: string[];
+  factorNames: string[];
+  saved?: boolean;
+  savedAt?: string | null;
+  updatedAt?: string | null;
+  groupMetrics?: {
+    averageCorrelation?: number | null;
+    minPairCorrelation?: number | null;
+    minOverlapDays?: number | null;
+  };
+  factorValueCorrelation: TacticalGroupFactorValueCorrelation;
+  strategy: {
+    method: Record<string, string>;
+    alignment: {
+      factorLagTradingDays: number;
+      factorBeforeEntry: boolean;
+      entryBeforeExit: boolean;
+      trainingPeriod: string[];
+      validationPeriod: string[];
+      oosStatus: string;
+    };
+    training: TacticalGroupStrategyPeriod;
+    validation: TacticalGroupStrategyPeriod;
+  };
+}
+
+export interface TacticalGroupTestSummary {
+  key: string;
+  library: string;
+  factorIds: string[];
+  factorNames: string[];
+  savedAt?: string | null;
+  updatedAt?: string | null;
+  groupMetrics?: {
+    averageCorrelation?: number | null;
+    minPairCorrelation?: number | null;
+    minOverlapDays?: number | null;
+  };
+  averageCorrelation?: number | null;
+  minPairCorrelation?: number | null;
+  minOverlapDays?: number | null;
+  averagePearson?: number | null;
+  averageSpearman?: number | null;
+  trainingTotalExcess?: number | null;
+  validationTotalExcess?: number | null;
+  trainingTotalExcessDelta?: number | null;
+  trainingMeanMonthlyExcessDelta?: number | null;
+  trainingDrawdownDelta?: number | null;
+  trainingSharpeDelta?: number | null;
+  validationTotalExcessDelta?: number | null;
+  validationMeanMonthlyExcessDelta?: number | null;
+  validationDrawdownDelta?: number | null;
+  validationSharpeDelta?: number | null;
 }
 
 export interface TacticalFactorResult {
@@ -218,6 +397,7 @@ export interface TacticalAnalyzeResponse {
     skipped: number;
     labels: Record<TacticalLabel | string, number>;
     thresholds: Record<string, Record<string, unknown>>;
+    returnCorrelation?: Record<string, TacticalReturnCorrelationSummary>;
     skippedFactors?: Array<{ factorId: string; reason: string }>;
   };
   factors: TacticalFactorResult[];

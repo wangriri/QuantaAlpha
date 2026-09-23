@@ -107,17 +107,18 @@ class SingleFactorEvaluator:
             valid_start, valid_end = self.config.validation_period
             calendar_start = (pd.Timestamp(train_start) - pd.Timedelta(days=40)).strftime("%Y-%m-%d")
             trade_dates = self.market_data.load_trade_dates(calendar_start, valid_end)
-            panel = self.market_data.load_panel(train_start, valid_end, refresh=refresh_market_cache)
-            panel = self._eligible_panel(panel)
+            raw_panel = self.market_data.load_panel(train_start, valid_end, refresh=refresh_market_cache)
+            panel = self._eligible_panel(raw_panel)
 
             training_panel = self._period_panel(panel, train_start, train_end)
+            training_benchmark_panel = self._period_panel(raw_panel, train_start, train_end)
             training_aligned = self._align(factor, panel, trade_dates, train_start, train_end)
             raw_daily_ic = _daily_correlations(training_aligned)
             raw_ic = _finite(raw_daily_ic["ic"].mean()) if not raw_daily_ic.empty else None
             direction = -1 if raw_ic is not None and raw_ic < 0 else 1
             result.direction_multiplier = direction
 
-            training = self._evaluate_period(training_aligned, direction, training_panel)
+            training = self._evaluate_period(training_aligned, direction, training_benchmark_panel)
             decay = self._compute_ic_decay(factor, panel, trade_dates, train_start, train_end, direction)
             half_life = self._half_life(decay)
             training.metrics["ic_half_life"] = half_life
@@ -134,7 +135,7 @@ class SingleFactorEvaluator:
                 train_start,
                 train_end,
             )
-            result.subperiods = self._subperiod_metrics(training.aligned, training_panel, direction)
+            result.subperiods = self._subperiod_metrics(training.aligned, training_benchmark_panel, direction)
             result.lifecycle = {
                 "status": "candidate" if passed else "evaluation_failed",
                 "active": bool(passed),
@@ -149,9 +150,9 @@ class SingleFactorEvaluator:
                 result.warnings.append("Factor has a low median daily stock count")
 
             if passed or not self.config.section("validation").get("run_for_training_pass_only", True):
-                validation_panel = self._period_panel(panel, valid_start, valid_end)
+                validation_benchmark_panel = self._period_panel(raw_panel, valid_start, valid_end)
                 validation_aligned = self._align(factor, panel, trade_dates, valid_start, valid_end)
-                validation = self._evaluate_period(validation_aligned, direction, validation_panel)
+                validation = self._evaluate_period(validation_aligned, direction, validation_benchmark_panel)
                 result.validation = validation.metrics
                 result.validation["degradation_from_training"] = self._validation_degradation(
                     training.metrics,
@@ -379,7 +380,7 @@ class SingleFactorEvaluator:
         long_short_rows: list[dict[str, Any]] = []
         excess_rows: list[dict[str, Any]] = []
         benchmark_by_date = {
-            pd.Timestamp(date): group[["code", "oto_return"]].dropna()
+            pd.Timestamp(date): group[["code", "oto_return"]].dropna(subset=["oto_return"])
             for date, group in (benchmark_panel.groupby("entry_date") if benchmark_panel is not None else [])
         }
         aligned_by_date = {
@@ -393,6 +394,8 @@ class SingleFactorEvaluator:
             return_day = benchmark_by_date.get(pd.Timestamp(date))
             if return_day is None:
                 return_day = selection_day[["code", "oto_return"]].dropna()
+            benchmark_returns = pd.to_numeric(return_day["oto_return"], errors="coerce").dropna()
+            benchmark_gross = _finite(benchmark_returns.mean()) if not benchmark_returns.empty else None
             rate = self._fee_rate(pd.Timestamp(date))
             should_rebalance = days_since_rebalance >= rebalance_period or not any(current_groups.values())
             is_rebalance_day = False
@@ -428,6 +431,18 @@ class SingleFactorEvaluator:
                     rebalance_skipped = True
 
             if not any(current_groups.values()):
+                if benchmark_gross is not None:
+                    excess_rows.append(
+                        {
+                            "date": pd.Timestamp(date),
+                            "head_net_return": None,
+                            "benchmark_net_return": benchmark_gross,
+                            "excess_return": None,
+                            "benchmark_fee": 0.0,
+                            "is_rebalance_day": False,
+                            "rebalance_period_days": rebalance_period,
+                        }
+                    )
                 continue
             if not is_rebalance_day:
                 days_since_rebalance += 1
@@ -480,15 +495,13 @@ class SingleFactorEvaluator:
                 )
 
             benchmark_fee = 0.0
-            benchmark_returns = pd.to_numeric(return_day["oto_return"], errors="coerce").dropna()
-            benchmark_gross = _finite(benchmark_returns.mean()) if not benchmark_returns.empty else None
-            if top_net is not None and benchmark_gross is not None:
+            if benchmark_gross is not None:
                 excess_rows.append(
                     {
                         "date": pd.Timestamp(date),
                         "head_net_return": top_net,
                         "benchmark_net_return": benchmark_gross,
-                        "excess_return": top_net - benchmark_gross,
+                        "excess_return": top_net - benchmark_gross if top_net is not None else None,
                         "benchmark_fee": benchmark_fee,
                         "is_rebalance_day": is_rebalance_day,
                         "rebalance_period_days": rebalance_period,

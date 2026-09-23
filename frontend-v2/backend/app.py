@@ -9,6 +9,7 @@ and reads factor library JSON for the factor browsing API.
 import asyncio
 import csv
 import glob
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,7 @@ EXPERIMENT_CONFIG_PATH = PROJECT_ROOT / "configs" / "experiment.yaml"
 BACKTEST_CONFIG_PATH = PROJECT_ROOT / "configs" / "backtest.yaml"
 EVALUATION_CONFIG_PATH = PROJECT_ROOT / "configs" / "evaluation.yaml"
 TACTICAL_CONFIG_PATH = PROJECT_ROOT / "configs" / "tactical_analysis.yaml"
+TACTICAL_GROUP_TEST_DIR = PROJECT_ROOT / "data" / "results" / "tactical_group_tests"
 DEDUP_REPORT_DIR = PROJECT_ROOT / "data" / "results" / "dedup_reports"
 TRACE_ROOT = PROJECT_ROOT / "data" / "run_traces"
 PROMPT_PACKS_DIR = PROJECT_ROOT / "quantaalpha" / "prompting" / "packs"
@@ -296,6 +298,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000", "http://127.0.0.1:3000",
         "http://localhost:3001", "http://127.0.0.1:3001",
+        "http://localhost:3011", "http://127.0.0.1:3011",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -348,6 +351,15 @@ class TacticalAnalyzeRequest(BaseModel):
     library: str = Field(..., description="Factor library JSON filename")
 
 
+class TacticalGroupTestRequest(BaseModel):
+    library: str = Field(..., description="Factor library JSON filename")
+    factorIds: List[str] = Field(..., min_length=2, max_length=10, description="Factor IDs in one tactical group")
+    refresh: bool = Field(False, description="Recompute even when a saved group test exists")
+    averageCorrelation: Optional[float] = Field(None, ge=-1.0, le=1.0)
+    minPairCorrelation: Optional[float] = Field(None, ge=-1.0, le=1.0)
+    minOverlapDays: Optional[int] = Field(None, ge=0)
+
+
 class TacticalConfigUpdate(BaseModel):
     enabled: Optional[bool] = None
     min_training_months: Optional[int] = Field(None, ge=1, le=120)
@@ -360,6 +372,12 @@ class TacticalConfigUpdate(BaseModel):
     severe_drawdown_quantile: Optional[float] = Field(None, ge=0.0, le=1.0)
     min_positive_month_ratio: Optional[float] = Field(None, ge=0.0, le=1.0)
     min_burst_month_count: Optional[int] = Field(None, ge=0, le=120)
+    high_return_correlation_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+    duplicate_return_correlation_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+    min_return_correlation_overlap: Optional[int] = Field(None, ge=2, le=5000)
+    return_correlation_group_size: Optional[int] = Field(None, ge=2, le=10)
+    return_correlation_group_avg_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+    max_return_correlation_groups: Optional[int] = Field(None, ge=1, le=500)
 
 
 class EvaluationConfigUpdate(BaseModel):
@@ -845,6 +863,11 @@ def _read_json_file(path: Path, default: Any = None) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def _write_json_file(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _read_jsonl_file(path: Path) -> List[Dict[str, Any]]:
@@ -1443,9 +1466,12 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         dotenv = _load_dotenv_dict()
         env.update(dotenv)
         venv_bin = PROJECT_ROOT / ".venv" / "bin"
-        env.setdefault("VIRTUAL_ENV", str(PROJECT_ROOT / ".venv"))
+        if not venv_bin.exists():
+            venv_bin = Path(sys.executable).parent
+        env.setdefault("VIRTUAL_ENV", str(Path(sys.executable).parents[1]))
         env.setdefault("CONDA_DEFAULT_ENV", env.get("CONDA_ENV_NAME", "quantaalpha"))
         env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
+        env["FACTOR_CoSTEER_PYTHON_BIN"] = str(Path(sys.executable))
 
         # Use experiment_id as suffix to guarantee isolation
         experiment_id = f"exp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -1563,12 +1589,17 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         })
 
         # Launch subprocess
+        process_options: Dict[str, Any] = {}
+        if hasattr(os, "setsid"):
+            process_options["preexec_fn"] = os.setsid
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(PROJECT_ROOT),
             env=env,
+            **process_options,
         )
         task["pid"] = proc.pid
 
@@ -1698,7 +1729,10 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
         exit_code = await proc.wait()
         task["pid"] = None
 
-        if exit_code == 0:
+        if task.get("status") == "cancelled":
+            task["progress"]["phase"] = "cancelled"
+            task["progress"]["message"] = "实验已停止"
+        elif exit_code == 0:
             task["status"] = "completed"
             task["progress"]["phase"] = "completed"
             task["progress"]["progress"] = 100
@@ -1800,11 +1834,19 @@ async def cancel_mining(task_id: str):
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     task = tasks[task_id]
+    task["status"] = "cancelled"
+    task["progress"]["phase"] = "cancelled"
+    task["progress"]["message"] = "正在停止任务..."
+    task["updatedAt"] = _now()
     if task.get("pid"):
         try:
             pid = task["pid"]
+            pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
             # Try graceful termination first
-            os.kill(pid, signal.SIGTERM)
+            if pgid and hasattr(os, "killpg"):
+                os.killpg(pgid, signal.SIGTERM)
+            else:
+                os.kill(pid, signal.SIGTERM)
             
             # Wait briefly for cleanup (0.5s)
             for _ in range(5):
@@ -1817,12 +1859,16 @@ async def cancel_mining(task_id: str):
             # Force kill if still running
             try:
                 os.kill(pid, 0)
-                os.kill(pid, signal.SIGKILL)
+                if pgid and hasattr(os, "killpg"):
+                    os.killpg(pgid, signal.SIGKILL)
+                else:
+                    os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
         except ProcessLookupError:
             pass
-    task["status"] = "cancelled"
+    task["pid"] = None
+    task["progress"]["message"] = "任务已停止"
     task["updatedAt"] = _now()
     await _broadcast(task_id, {
         "type": "result",
@@ -2741,6 +2787,17 @@ def _resolve_tactical_artifact(path: str) -> Path:
     return artifact
 
 
+def _resolve_tactical_h5_artifact(path: str) -> Path:
+    artifact = Path(path).expanduser()
+    if not artifact.is_absolute():
+        artifact = PROJECT_ROOT / artifact
+    artifact = artifact.resolve()
+    output_root = (PROJECT_ROOT / "data" / "results" / "factor_evaluations").resolve()
+    if output_root not in artifact.parents or not artifact.exists() or artifact.suffix.lower() not in {".h5", ".hdf", ".hdf5"}:
+        raise HTTPException(status_code=404, detail="Tactical factor value artifact not found")
+    return artifact
+
+
 def _read_tactical_excess_artifact(path: str):
     import pandas as pd
 
@@ -2756,6 +2813,13 @@ def _read_tactical_excess_artifact(path: str):
         frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
     frame["excess_return"] = pd.to_numeric(frame["excess_return"], errors="coerce")
     return frame
+
+
+def _read_tactical_factor_values(path: str):
+    import pandas as pd
+
+    artifact = _resolve_tactical_h5_artifact(path)
+    return pd.read_hdf(artifact)
 
 
 def _build_tactical_records(library_path: Path) -> List[Dict[str, Any]]:
@@ -2799,6 +2863,146 @@ def _build_tactical_records(library_path: Path) -> List[Dict[str, Any]]:
     return records
 
 
+def _build_tactical_group_records(library_path: Path, factor_ids: List[str]) -> List[Dict[str, Any]]:
+    raw = _load_factor_library(str(library_path))
+    factors = raw.get("factors", {})
+    missing = [factor_id for factor_id in factor_ids if factor_id not in factors]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Factor IDs not found in library: {', '.join(missing)}")
+
+    records: List[Dict[str, Any]] = []
+    for factor_id in factor_ids:
+        factor_info = factors[factor_id]
+        if not isinstance(factor_info, dict):
+            raise HTTPException(status_code=400, detail=f"Invalid factor entry: {factor_id}")
+        evaluation = factor_info.get("evaluation_v2") or {}
+        artifacts = evaluation.get("artifacts") or {}
+        h5_path = (factor_info.get("cache_location") or {}).get("result_h5_path")
+        if not h5_path:
+            raise HTTPException(status_code=400, detail=f"因子 {factor_id} 缺少 result.h5 因子值")
+        record: Dict[str, Any] = {
+            "factorId": factor_info.get("factor_id", factor_id),
+            "factorName": factor_info.get("factor_name", factor_id),
+            "factorExpression": factor_info.get("factor_expression", ""),
+            "directionMultiplier": evaluation.get("direction_multiplier", 1),
+            "factor_values": _read_tactical_factor_values(str(h5_path)),
+        }
+        training_path = artifacts.get("training_excess_returns")
+        if training_path:
+            record["training_excess"] = _read_tactical_excess_artifact(str(training_path))
+        validation_path = artifacts.get("validation_excess_returns")
+        if validation_path:
+            try:
+                record["validation_excess"] = _read_tactical_excess_artifact(str(validation_path))
+            except Exception:
+                record["validation_excess"] = None
+        records.append(record)
+    return records
+
+
+def _tactical_group_test_key(library_name: str, factor_ids: List[str]) -> str:
+    payload = json.dumps(
+        {"library": Path(library_name).name, "factorIds": sorted(str(factor_id) for factor_id in factor_ids)},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _tactical_group_test_path(library_name: str, factor_ids: List[str]) -> Path:
+    key = _tactical_group_test_key(library_name, factor_ids)
+    safe_stem = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in Path(library_name).stem)
+    return TACTICAL_GROUP_TEST_DIR / f"{safe_stem}_{key}.json"
+
+
+def _summarize_tactical_group_test(payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = payload.get("result") or {}
+    strategy = result.get("strategy") or {}
+    training = strategy.get("training") or {}
+    validation = strategy.get("validation") or {}
+    value_corr = result.get("factorValueCorrelation") or {}
+    group_metrics = result.get("groupMetrics") or payload.get("groupMetrics") or {}
+    training_deltas = (training.get("comparison") or {}).get("deltas") or {}
+    validation_deltas = (validation.get("comparison") or {}).get("deltas") or {}
+    return {
+        "key": payload.get("key"),
+        "library": payload.get("library"),
+        "factorIds": result.get("factorIds") or payload.get("factorIds") or [],
+        "factorNames": result.get("factorNames") or [],
+        "savedAt": payload.get("savedAt"),
+        "updatedAt": payload.get("updatedAt"),
+        "groupMetrics": group_metrics,
+        "averageCorrelation": group_metrics.get("averageCorrelation"),
+        "minPairCorrelation": group_metrics.get("minPairCorrelation"),
+        "minOverlapDays": group_metrics.get("minOverlapDays"),
+        "averagePearson": value_corr.get("averagePearson"),
+        "averageSpearman": value_corr.get("averageSpearman"),
+        "trainingTotalExcess": (training.get("metrics") or {}).get("total_excess"),
+        "validationTotalExcess": (validation.get("metrics") or {}).get("total_excess"),
+        "trainingTotalExcessDelta": training_deltas.get("total_excess"),
+        "trainingMeanMonthlyExcessDelta": training_deltas.get("mean_monthly_excess"),
+        "trainingDrawdownDelta": training_deltas.get("max_monthly_drawdown"),
+        "trainingSharpeDelta": training_deltas.get("excess_sharpe"),
+        "validationTotalExcessDelta": validation_deltas.get("total_excess"),
+        "validationMeanMonthlyExcessDelta": validation_deltas.get("mean_monthly_excess"),
+        "validationDrawdownDelta": validation_deltas.get("max_monthly_drawdown"),
+        "validationSharpeDelta": validation_deltas.get("excess_sharpe"),
+    }
+
+
+def _read_tactical_group_test(library_name: str, factor_ids: List[str]) -> Optional[Dict[str, Any]]:
+    path = _tactical_group_test_path(library_name, factor_ids)
+    payload = _read_json_file(path)
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _save_tactical_group_test(
+    library_name: str,
+    factor_ids: List[str],
+    result: Dict[str, Any],
+    group_metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    now = datetime.now().isoformat(timespec="seconds")
+    key = _tactical_group_test_key(library_name, factor_ids)
+    existing = _read_tactical_group_test(library_name, factor_ids) or {}
+    if group_metrics:
+        result["groupMetrics"] = {key: value for key, value in group_metrics.items() if value is not None}
+    payload = {
+        "key": key,
+        "library": Path(library_name).name,
+        "factorIds": sorted(str(factor_id) for factor_id in factor_ids),
+        "groupMetrics": result.get("groupMetrics") or existing.get("groupMetrics") or {},
+        "savedAt": existing.get("savedAt") or now,
+        "updatedAt": now,
+        "result": result,
+    }
+    _write_json_file(_tactical_group_test_path(library_name, factor_ids), payload)
+    return payload
+
+
+def _tactical_group_metrics_from_request(req: TacticalGroupTestRequest) -> Dict[str, Any]:
+    return {
+        "averageCorrelation": req.averageCorrelation,
+        "minPairCorrelation": req.minPairCorrelation,
+        "minOverlapDays": req.minOverlapDays,
+    }
+
+
+def _list_tactical_group_tests(library_name: str) -> List[Dict[str, Any]]:
+    library = Path(library_name).name
+    if not TACTICAL_GROUP_TEST_DIR.exists():
+        return []
+    items: List[Dict[str, Any]] = []
+    for path in TACTICAL_GROUP_TEST_DIR.glob("*.json"):
+        payload = _read_json_file(path)
+        if not isinstance(payload, dict) or payload.get("library") != library:
+            continue
+        items.append(_summarize_tactical_group_test(payload))
+    return sorted(items, key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
+
+
 @app.get("/api/v1/evaluation/config", response_model=ApiResponse)
 async def get_evaluation_config():
     return ApiResponse(success=True, data={"config": _evaluation_config_for_frontend()})
@@ -2833,6 +3037,68 @@ async def analyze_tactical_factors(req: TacticalAnalyzeRequest):
     records = _build_tactical_records(library_path)
     result = TacticalFactorAnalyzer(config).analyze_factors(records)
     result["library"] = library_path.name
+    return ApiResponse(success=True, data=result)
+
+
+@app.get("/api/v1/tactical/group-tests", response_model=ApiResponse)
+async def list_tactical_factor_group_tests(library: str = Query(..., description="Factor library JSON filename")):
+    library_path = _resolve_factor_library(library)
+    return ApiResponse(success=True, data={"tests": _list_tactical_group_tests(library_path.name)})
+
+
+@app.post("/api/v1/tactical/group-test/saved", response_model=ApiResponse)
+async def get_saved_tactical_factor_group_test(req: TacticalGroupTestRequest):
+    library_path = _resolve_factor_library(req.library)
+    payload = _read_tactical_group_test(library_path.name, req.factorIds)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Saved tactical group test not found")
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail="Saved tactical group test is corrupted")
+    result["library"] = library_path.name
+    result["saved"] = True
+    result["savedAt"] = payload.get("savedAt")
+    result["updatedAt"] = payload.get("updatedAt")
+    if "groupMetrics" not in result and payload.get("groupMetrics"):
+        result["groupMetrics"] = payload.get("groupMetrics")
+    return ApiResponse(success=True, data=result)
+
+
+@app.post("/api/v1/tactical/group-test", response_model=ApiResponse)
+async def test_tactical_factor_group(req: TacticalGroupTestRequest):
+    from quantaalpha.evaluation.tactical import TacticalFactorAnalyzer
+
+    library_path = _resolve_factor_library(req.library)
+    config = _tactical_config_for_frontend()
+    if not req.refresh:
+        payload = _read_tactical_group_test(library_path.name, req.factorIds)
+        if payload and isinstance(payload.get("result"), dict):
+            result = payload["result"]
+            request_metrics = {key: value for key, value in _tactical_group_metrics_from_request(req).items() if value is not None}
+            if request_metrics:
+                result["groupMetrics"] = {**(result.get("groupMetrics") or payload.get("groupMetrics") or {}), **request_metrics}
+                payload = _save_tactical_group_test(library_path.name, req.factorIds, result, result["groupMetrics"])
+            result["library"] = library_path.name
+            result["saved"] = True
+            result["savedAt"] = payload.get("savedAt")
+            result["updatedAt"] = payload.get("updatedAt")
+            if "groupMetrics" not in result and payload.get("groupMetrics"):
+                result["groupMetrics"] = payload.get("groupMetrics")
+            return ApiResponse(success=True, data=result, message="已读取保存的组合测试结果")
+    try:
+        records = _build_tactical_group_records(library_path, req.factorIds)
+        result = TacticalFactorAnalyzer(config).test_factor_group(records)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"组合进一步测试失败：{exc}") from exc
+    result["library"] = library_path.name
+    payload = _save_tactical_group_test(library_path.name, req.factorIds, result, _tactical_group_metrics_from_request(req))
+    result["saved"] = True
+    result["savedAt"] = payload.get("savedAt")
+    result["updatedAt"] = payload.get("updatedAt")
     return ApiResponse(success=True, data=result)
 
 
