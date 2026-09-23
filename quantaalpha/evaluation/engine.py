@@ -59,6 +59,7 @@ class PeriodEvaluation:
     metrics: dict[str, Any]
     daily_ic: pd.DataFrame
     group_returns: pd.DataFrame
+    long_short_returns: pd.DataFrame
     excess_returns: pd.DataFrame
     aligned: pd.DataFrame
 
@@ -267,6 +268,7 @@ class SingleFactorEvaluator:
                 },
                 daily_ic=pd.DataFrame(),
                 group_returns=pd.DataFrame(),
+                long_short_returns=pd.DataFrame(),
                 excess_returns=pd.DataFrame(),
                 aligned=aligned,
             )
@@ -278,10 +280,11 @@ class SingleFactorEvaluator:
         icir = abs(raw_ic) / raw_ic_std if raw_ic is not None and raw_ic_std and raw_ic_std > 0 else None
         rank_icir = abs(raw_rank_ic) / rank_std if raw_rank_ic is not None and rank_std and rank_std > 0 else None
 
-        grouped, excess = self._group_returns(aligned, direction, benchmark_panel)
+        grouped, long_short, excess = self._group_returns(aligned, direction, benchmark_panel)
         spread = None
         if not grouped.empty and {"G0", "G9"}.issubset(grouped.columns):
             spread = _finite((grouped["G9"] - grouped["G0"]).sum())
+        long_short_total = _finite(long_short["ls"].sum()) if "ls" in long_short else None
         sharpe = None
         if not excess.empty and excess["excess_return"].std(ddof=1) > 0:
             annualization = float(self.config.section("metrics").get("annualization", 252))
@@ -307,6 +310,7 @@ class SingleFactorEvaluator:
             "rank_icir_annualized_reference": _finite(rank_icir * math.sqrt(252)) if rank_icir is not None else None,
             "directional_ic": _finite(raw_ic * direction) if raw_ic is not None else None,
             "long_short_spread": spread,
+            "long_short_return": long_short_total,
             "excess_sharpe": sharpe,
             "head_group_return_gross": _finite(grouped["G9"].sum()) if "G9" in grouped else None,
             "tail_group_return_gross": _finite(grouped["G0"].sum()) if "G0" in grouped else None,
@@ -320,7 +324,7 @@ class SingleFactorEvaluator:
                 "max_stock_count": _finite(counts.max()),
             },
         }
-        return PeriodEvaluation(metrics, daily_ic, grouped, excess, aligned)
+        return PeriodEvaluation(metrics, daily_ic, grouped, long_short, excess, aligned)
 
     @staticmethod
     def _validation_degradation(training: dict[str, Any], validation: dict[str, Any]) -> dict[str, Any]:
@@ -361,7 +365,7 @@ class SingleFactorEvaluator:
         aligned: pd.DataFrame,
         direction: int,
         benchmark_panel: pd.DataFrame | None = None,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         metrics_cfg = self.config.section("metrics")
         group_count = int(metrics_cfg.get("group_count", 10))
         noise_std = float(metrics_cfg.get("qcut_noise_std", 1e-8))
@@ -372,6 +376,7 @@ class SingleFactorEvaluator:
         previous_groups: dict[int, set[str]] = {index: set() for index in range(group_count)}
         days_since_rebalance = rebalance_period
         group_rows: list[dict[str, Any]] = []
+        long_short_rows: list[dict[str, Any]] = []
         excess_rows: list[dict[str, Any]] = []
         benchmark_by_date = {
             pd.Timestamp(date): group[["code", "oto_return"]].dropna()
@@ -430,6 +435,10 @@ class SingleFactorEvaluator:
             row["is_rebalance_day"] = is_rebalance_day
             row["rebalance_skipped"] = rebalance_skipped
             top_net = None
+            long_gross = None
+            long_fee = 0.0
+            short_gross = None
+            short_fee = 0.0
             returns = return_day.set_index("code")["oto_return"]
             for group_index in range(group_count):
                 current = current_groups[group_index]
@@ -443,9 +452,32 @@ class SingleFactorEvaluator:
                 gross = _finite(member_returns.mean()) if not member_returns.empty else None
                 row[f"G{group_index}"] = gross
                 row[f"G{group_index}_fee"] = fee
+                if group_index == 0:
+                    short_gross = gross
+                    short_fee = fee
                 if group_index == group_count - 1 and gross is not None:
                     top_net = gross - fee
+                    long_gross = gross
+                    long_fee = fee
             group_rows.append(row)
+
+            if long_gross is not None and short_gross is not None:
+                long_group = long_gross - long_fee
+                short_group = -1.0 * short_gross - short_fee
+                long_short_rows.append(
+                    {
+                        "date": pd.Timestamp(date),
+                        "long_group": long_group,
+                        "short_group": short_group,
+                        "ls": (long_group + short_group) / 2.0,
+                        "long_gross": long_gross,
+                        "short_gross": short_gross,
+                        "long_fee": long_fee,
+                        "short_fee": short_fee,
+                        "is_rebalance_day": is_rebalance_day,
+                        "rebalance_period_days": rebalance_period,
+                    }
+                )
 
             benchmark_fee = 0.0
             benchmark_returns = pd.to_numeric(return_day["oto_return"], errors="coerce").dropna()
@@ -464,8 +496,9 @@ class SingleFactorEvaluator:
                 )
 
         groups = pd.DataFrame(group_rows).set_index("date").sort_index() if group_rows else pd.DataFrame()
+        long_short = pd.DataFrame(long_short_rows).set_index("date").sort_index() if long_short_rows else pd.DataFrame()
         excess = pd.DataFrame(excess_rows).set_index("date").sort_index() if excess_rows else pd.DataFrame()
-        return groups, excess
+        return groups, long_short, excess
 
     def _compute_ic_decay(
         self,
@@ -588,6 +621,13 @@ class SingleFactorEvaluator:
             "training_group_cumulative": writer.write_frame(
                 "training_group_cumulative.csv", training.group_returns.filter(regex=r"^G\d+$").cumsum()
             ),
+            "training_long_short_returns": writer.write_frame("training_long_short_returns.csv", training.long_short_returns),
+            "training_long_short_cumulative": writer.write_frame(
+                "training_long_short_cumulative.csv",
+                training.long_short_returns[["long_group", "short_group", "ls"]].cumsum()
+                if {"long_group", "short_group", "ls"}.issubset(training.long_short_returns.columns)
+                else pd.DataFrame(),
+            ),
             "training_excess_returns": writer.write_frame("training_excess_returns.csv", training.excess_returns),
             "alignment_audit": writer.write_frame(
                 "alignment_audit.csv",
@@ -599,6 +639,7 @@ class SingleFactorEvaluator:
                 {
                     "validation_daily_ic": writer.write_frame("validation_daily_ic.csv", validation.daily_ic),
                     "validation_group_returns": writer.write_frame("validation_group_returns.csv", validation.group_returns),
+                    "validation_long_short_returns": writer.write_frame("validation_long_short_returns.csv", validation.long_short_returns),
                     "validation_excess_returns": writer.write_frame("validation_excess_returns.csv", validation.excess_returns),
                 }
             )

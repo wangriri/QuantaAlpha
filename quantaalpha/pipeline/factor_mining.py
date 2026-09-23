@@ -40,6 +40,7 @@ from quantaalpha.llm.config import LLM_SETTINGS
 from quantaalpha.tracing import RunRecorder
 from quantaalpha.prompting import (
     configure_prompting,
+    resolve_evolution_prompt_path,
     resolve_planning_prompt_path,
 )
 
@@ -464,7 +465,7 @@ def run_evolution_loop(
         logger.info(f"  Direction {i}: {d}")
 
     pool_save_path = Path(log_root) / "trajectory_pool.json"
-    mutation_prompt_path = Path(__file__).parent / "prompts" / "evolution_prompts.yaml"
+    mutation_prompt_path = resolve_evolution_prompt_path(Path(__file__).parent / "prompts" / "evolution_prompts.yaml")
     
     logger.info(f"Trajectory pool path: {pool_save_path} (fresh_start={fresh_start})")
 

@@ -1,0 +1,264 @@
+evaluator_code_feedback_v1_system: |-
+  用户正在以下场景中实现一些带有表达式的因子：
+  {{ scenario }}
+
+  **Only the following operations are allowed in expression:**
+  ### **Cross-sectional Functions**
+  - **RANK(A)**: Ranking of each element in the cross-sectional dimension of A.
+  - **ZSCORE(A)**: Z-score of each element in the cross-sectional dimension of A.
+  - **MEAN(A)**: Mean value of each element in the cross-sectional dimension of A.
+  - **STD(A)**: Standard deviation in the cross-sectional dimension of A.
+  - **SKEW(A)**: Skewness in the cross-sectional dimension of A.
+  - **KURT(A)**: Kurtosis in the cross-sectional dimension of A.
+  - **MAX(A)**: Maximum value in the cross-sectional dimension of A.
+  - **MIN(A)**: Minimum value in the cross-sectional dimension of A.
+  - **MEDIAN(A)**: Median value in the cross-sectional dimension of A
+  - **SCALE(A, target_sum)**: Scale the absolute values in the cross-section to sum to target_sum.
+
+  ### **Time-Series Functions**
+  - **DELTA(A, n)**: Change in value of A over n periods.
+  - **DELAY(A, n)**: Value of A delayed by n periods.
+  - **TS_MEAN(A, n)**: Mean value of sequence A over the past n days.
+  - **TS_SUM(A, n)**: Sum of sequence A over the past n days.
+  - **TS_RANK(A, n)**: Time-series rank of the last value of A in the past n days.
+  - **TS_ZSCORE(A, n)**: Z-score for each sequence in A over the past n days.
+  - **TS_MEDIAN(A, n)**: Median value of sequence A over the past n days.
+  - **TS_PCTCHANGE(A, p)**: Percentage change in the value of sequence A over p periods.
+  - **TS_MIN(A, n)**: Minimum value of A in the past n days.
+  - **TS_MAX(A, n)**: Maximum value of A in the past n days.
+  - **TS_ARGMAX(A, n)**: The index (relative to the current time) of the maximum value of A over the past n days.
+  - **TS_ARGMIN(A, n)**: The index (relative to the current time) of the minimum value of A over the past n days.
+  - **TS_QUANTILE(A, p, q)**: Rolling quantile of sequence A over the past p periods, where q is the quantile value between 0 and 1.
+  - **TS_STD(A, n)**: Standard deviation of sequence A over the past n days.
+  - **TS_VAR(A, p)**: Rolling variance of sequence A over the past p periods.
+  - **TS_CORR(A, B, n)**: Correlation coefficient between sequences A and B over the past n days.
+  - **TS_COVARIANCE(A, B, n)**: Covariance between sequences A and B over the past n days.
+  - **TS_MAD(A, n)**: Rolling Median Absolute Deviation of sequence A over the past n days.
+  - **PERCENTILE(A, q, p)**: Quantile of sequence A, where q is the quantile value between 0 and 1. If p is provided, it calculates the rolling quantile over the past p periods.
+  - **HIGHDAY(A, n)**: Number of days since the highest value of A in the past n days.
+  - **LOWDAY(A, n)**: Number of days since the lowest value of A in the past n days.
+  - **SUMAC(A, n)**: Cumulative sum of A over the past n days.
+
+  ### **Moving Averages and Smoothing Functions**
+  - **SMA(A, n, m)**: Simple moving average of A over n periods with modifier m.
+  - **WMA(A, n)**: Weighted moving average of A over n periods, with weights decreasing from 0.9 to 0.9^(n).
+  - **EMA(A, n)**: Exponential moving average of A over n periods, where the decay factor is 2/(n+1).
+  - **DECAYLINEAR(A, d)**: Linearly weighted moving average of A over d periods, with weights increasing from 1 to d.
+
+  ### **Mathematical Operations**
+  - **PROD(A, n)**: Product of values in A over the past n days. Use `*` for general multiplication.
+  - **LOG(A)**: Natural logarithm of each element in A.
+  - **SQRT(A)**: Square root of each element in A.
+  - **POW(A, n)**: Raise each element in A to the power of n.
+  - **SIGN(A)**: Sign of each element in A, one of 1, 0, or -1.
+  - **EXP(A)**: Exponential of each element in A.
+  - **ABS(A)**: Absolute value of A.
+  - **MAX(A, B)**: Maximum value between A and B.
+  - **MIN(A, B)**: Minimum value between A and B.
+  - **INV(A)**: Reciprocal (1/x) of each element in sequence A.
+  - **FLOOR(A)**: Floor of each element in sequence A.
+
+  ### **Conditional and Logical Functions**
+  - **COUNT(C, n)**: Count of samples satisfying condition C in the past n periods. Here, C is a logical expression, e.g., `$close > $open`.
+  - **SUMIF(A, n, C)**: Sum of A over the past n periods if condition C is met. Here, C is a logical expression.
+  - **FILTER(A, C)**: Filtering multi-column sequence A based on condition C. Here, C is presented in a logical expression form, with the same size as A.
+  - **(C1)&&(C2)**: Logical operation "and". Both C1 and C2 are logical expressions, such as A > B.
+  - **(C1)||(C2)**: Logical operation "or". Both C1 and C2 are logical expressions, such as A > B.
+  - **(C1)?(A):(B)**: Logical operation "If condition C1 holds, then A, otherwise B". C1 is a logical expression, such as A > B.
+
+  ### **Regression and Residual Functions**
+  - **SEQUENCE(n)**: A single-column sequence of length n, ranging from 1 to integer n. `SEQUENCE()` should always be nested in `REGBETA()` or `REGRESI()` as argument B.
+  - **REGBETA(A, B, n)**: Regression coefficient of A on B using the past n samples, where A MUST be a multi-column sequence and B a single-column or multi-column sequence.
+  - **REGRESI(A, B, n)**: Residual of regression of A on B using the past n samples, where A MUST be a multi-column sequence and B a single-column or multi-column sequence.
+
+  ### **Technical Indicators**
+  - **RSI(A, n)**: Relative Strength Index of sequence A over n periods. Measures momentum by comparing the magnitude of recent gains to recent losses.
+  - **MACD(A, short_window, long_window)**: Moving Average Convergence Divergence (MACD) of sequence A, calculated as the difference between the short-term (short_window) and long-term (long_window) exponential moving averages.
+  - **BB_MIDDLE(A, n)**: Middle Bollinger Band, calculated as the n-period simple moving average of sequence A.
+  - **BB_UPPER(A, n)**: Upper Bollinger Band, calculated as middle band plus two standard deviations of sequence A over n periods.
+  - **BB_LOWER(A, n)**: Lower Bollinger Band, calculated as middle band minus two standard deviations of sequence A over n periods.
+
+  Note that:
+  - Only the variables provided in data (e.g., `$open`), arithmetic operators (`+, -, *, /`), logical operators (`&&, ||`), and the operations above are allowed in the factor expression.
+  - Make sure your factor expression contains at least one variable within the dataframe columns (e.g., $open), combined with registered operations above. Do NOT use any undeclared variable (e.g., `n`, `w_1`) and undefined symbols (e.g., `=`) in the expression.
+  - Pay attention to the distinction between operations with the TS prefix (e.g., `TS_STD()`) and those without (e.g., `STD()`).
+
+  用户会提供因子信息、表达式模板以及执行反馈。
+
+  你的任务是判断用户给出的 factor expression 是否与因子描述一致，以及该表达式是否能被正确计算。
+  当前表达式会被渲染到一个 Python jinja2 template 中并执行，因此你需要重点关注：
+  1. 表达式语义是否与因子描述大体一致
+  2. 表达式是否使用了允许的变量、函数和操作符
+  3. 执行错误是否反映出表达式层面的关键问题
+
+  说明：
+  - 你给出的评论是发给 coding agent 的，不是给终端用户逐行排查的，因此不要写“请检查第几行”。
+  - 允许公式与表达式在非核心细节上存在轻微差异，例如窗口长度、小的实现差别等；不要吹毛求疵。
+  - 不要输出代码，只输出清晰、简短、关键的评论。
+  - 如果没有发现明显问题，直接输出 `No comment found`。
+
+  输出格式：
+  comment 1: 用中文写关键评论
+  comment 2: 用中文写关键评论
+
+evaluator_code_feedback_v1_user: |-
+  --------------Factor information:---------------
+  {{ factor_information }}
+  --------------Factor Expression in the Python template:---------------
+  {{ code }}
+  --------------Execution feedback:---------------
+  {{ execution_feedback }}
+  {% if value_feedback is not none %}
+  --------------Factor value feedback:---------------
+  {{ value_feedback }}
+  {% endif %}
+  {% if gt_code is not none %}
+  {% endif %}
+
+evolving_strategy_factor_implementation_v1_system: |-
+  用户正在以下场景中通过编写 factor expression 来实现因子：
+  {{ scenario }}
+
+  只要目标因子能够在当前可用数据和操作集合中被合理实现，你的表达式就应尽量贴合因子描述。
+
+  用户可能提供以下信息来帮助你修正表达式：
+  1. 与目标相似因子的正确 expression
+  2. 你之前失败的 expression 及其反馈
+  3. 最新失败 expression 的建议，以及若干“相似错误 -> 修正表达式”的示例
+  4. 其余代码部分是固定的 jinja2 template，你的 response 只需要给出新的 expression
+
+  **你的任务是基于最近一次失败尝试，修正或重写 expression。**
+
+  **Only the following operations are allowed in expression:**
+  ### **Cross-sectional Functions**
+  - **RANK(A)**: Ranking of each element in the cross-sectional dimension of A.
+  - **ZSCORE(A)**: Z-score of each element in the cross-sectional dimension of A.
+  - **MEAN(A)**: Mean value of each element in the cross-sectional dimension of A.
+  - **STD(A)**: Standard deviation in the cross-sectional dimension of A.
+  - **SKEW(A)**: Skewness in the cross-sectional dimension of A.
+  - **KURT(A)**: Kurtosis in the cross-sectional dimension of A.
+  - **MAX(A)**: Maximum value in the cross-sectional dimension of A.
+  - **MIN(A)**: Minimum value in the cross-sectional dimension of A.
+  - **MEDIAN(A)**: Median value in the cross-sectional dimension of A
+  - **SCALE(A, target_sum)**: Scale the absolute values in the cross-section to sum to target_sum.
+
+  ### **Time-Series Functions**
+  - **DELTA(A, n)**: Change in value of A over n periods.
+  - **DELAY(A, n)**: Value of A delayed by n periods.
+  - **TS_MEAN(A, n)**: Mean value of sequence A over the past n days.
+  - **TS_SUM(A, n)**: Sum of sequence A over the past n days.
+  - **TS_RANK(A, n)**: Time-series rank of the last value of A in the past n days.
+  - **TS_ZSCORE(A, n)**: Z-score for each sequence in A over the past n days.
+  - **TS_MEDIAN(A, n)**: Median value of sequence A over the past n days.
+  - **TS_PCTCHANGE(A, p)**: Percentage change in the value of sequence A over p periods.
+  - **TS_MIN(A, n)**: Minimum value of A in the past n days.
+  - **TS_MAX(A, n)**: Maximum value of A in the past n days.
+  - **TS_ARGMAX(A, n)**: The index (relative to the current time) of the maximum value of A over the past n days.
+  - **TS_ARGMIN(A, n)**: The index (relative to the current time) of the minimum value of A over the past n days.
+  - **TS_QUANTILE(A, p, q)**: Rolling quantile of sequence A over the past p periods, where q is the quantile value between 0 and 1.
+  - **TS_STD(A, n)**: Standard deviation of sequence A over the past n days.
+  - **TS_VAR(A, p)**: Rolling variance of sequence A over the past p periods.
+  - **TS_CORR(A, B, n)**: Correlation coefficient between sequences A and B over the past n days.
+  - **TS_COVARIANCE(A, B, n)**: Covariance between sequences A and B over the past n days.
+  - **TS_MAD(A, n)**: Rolling Median Absolute Deviation of sequence A over the past n days.
+  - **PERCENTILE(A, q, p)**: Quantile of sequence A, where q is the quantile value between 0 and 1. If p is provided, it calculates the rolling quantile over the past p periods.
+  - **HIGHDAY(A, n)**: Number of days since the highest value of A in the past n days.
+  - **LOWDAY(A, n)**: Number of days since the lowest value of A in the past n days.
+  - **SUMAC(A, n)**: Cumulative sum of A over the past n days.
+
+  ### **Moving Averages and Smoothing Functions**
+  - **SMA(A, n, m)**: Simple moving average of A over n periods with modifier m.
+  - **WMA(A, n)**: Weighted moving average of A over n periods, with weights decreasing from 0.9 to 0.9^(n).
+  - **EMA(A, n)**: Exponential moving average of A over n periods, where the decay factor is 2/(n+1).
+  - **DECAYLINEAR(A, d)**: Linearly weighted moving average of A over d periods, with weights increasing from 1 to d.
+
+  ### **Mathematical Operations**
+  - **PROD(A, n)**: Product of values in A over the past n days. Use `*` for general multiplication.
+  - **LOG(A)**: Natural logarithm of each element in A.
+  - **SQRT(A)**: Square root of each element in A.
+  - **POW(A, n)**: Raise each element in A to the power of n.
+  - **SIGN(A)**: Sign of each element in A, one of 1, 0, or -1.
+  - **EXP(A)**: Exponential of each element in A.
+  - **ABS(A)**: Absolute value of A.
+  - **MAX(A, B)**: Maximum value between A and B.
+  - **MIN(A, B)**: Minimum value between A and B.
+  - **INV(A)**: Reciprocal (1/x) of each element in sequence A.
+  - **FLOOR(A)**: Floor of each element in sequence A.
+
+  ### **Conditional and Logical Functions**
+  - **COUNT(C, n)**: Count of samples satisfying condition C in the past n periods. Here, C is a logical expression, e.g., `$close > $open`.
+  - **SUMIF(A, n, C)**: Sum of A over the past n periods if condition C is met. Here, C is a logical expression.
+  - **FILTER(A, C)**: Filtering multi-column sequence A based on condition C. Here, C is presented in a logical expression form, with the same size as A.
+  - **(C1)&&(C2)**: Logical operation "and". Both C1 and C2 are logical expressions, such as A > B.
+  - **(C1)||(C2)**: Logical operation "or". Both C1 and C2 are logical expressions, such as A > B.
+  - **(C1)?(A):(B)**: Logical operation "If condition C1 holds, then A, otherwise B". C1 is a logical expression, such as A > B.
+
+  ### **Regression and Residual Functions**
+  - **SEQUENCE(n)**: A single-column sequence of length n, ranging from 1 to integer n. `SEQUENCE()` should always be nested in `REGBETA()` or `REGRESI()` as argument B.
+  - **REGBETA(A, B, n)**: Regression coefficient of A on B using the past n samples, where A MUST be a multi-column sequence and B a single-column or multi-column sequence.
+  - **REGRESI(A, B, n)**: Residual of regression of A on B using the past n samples, where A MUST be a multi-column sequence and B a single-column or multi-column sequence.
+
+  ### **Technical Indicators**
+  - **RSI(A, n)**: Relative Strength Index of sequence A over n periods. Measures momentum by comparing the magnitude of recent gains to recent losses.
+  - **MACD(A, short_window, long_window)**: Moving Average Convergence Divergence (MACD) of sequence A, calculated as the difference between the short-term (short_window) and long-term (long_window) exponential moving averages.
+  - **BB_MIDDLE(A, n)**: Middle Bollinger Band, calculated as the n-period simple moving average of sequence A.
+  - **BB_UPPER(A, n)**: Upper Bollinger Band, calculated as middle band plus two standard deviations of sequence A over n periods.
+  - **BB_LOWER(A, n)**: Lower Bollinger Band, calculated as middle band minus two standard deviations of sequence A over n periods.
+
+  Note that:
+  - Only the variables provided in data (e.g., `$open`), arithmetic operators (`+, -, *, /`), logical operators (`&&, ||`), and the operations above are allowed in the factor expression.
+  - Make sure your factor expression contains at least one variable within the dataframe columns (e.g., $open), combined with registered operations above. Do NOT use any undeclared variable (e.g., `n`, `w_1`) and undefined symbols (e.g., `=`) in the expression.
+  - Pay attention to the distinction between operations with the TS prefix (e.g., `TS_STD()`) and those without (e.g., `STD()`).
+
+  请输出合法 JSON。
+  All JSON keys must remain exactly in English as specified.
+  The expression value must remain a pure English expression string and must not contain any Chinese characters.
+  {
+      "expr": "[CORRECTED_FACTOR_EXPRESSION]"
+  }
+
+evolving_strategy_factor_implementation_v2_user: |-
+  --------------Target factor information:---------------
+  {{ factor_information_str }}
+
+  {% if former_expression is not none %}
+  --------------Your former latest attempt:---------------
+  =====Expression to the former implementation=====
+  {{ former_expression }}
+
+  =====Feedback to the former implementation=====
+  {{ former_feedback }}
+  {% endif %}
+
+  {% if queried_similar_error_knowledge|length != 0 %}
+  {% if error_summary_critics is none %}
+  请回顾你上一次失败的 expression。下面给出一些其他任务中出现过的相似错误及最终修正版本，请从中学习：
+  {% for error_content, similar_error_knowledge in queried_similar_error_knowledge %}
+  --------------Factor information to similar error ({{error_content}}):---------------
+  {{ similar_error_knowledge[0].target_task.get_task_information() }}
+  =====Code with similar error ({{error_content}}):=====
+  {{ similar_error_knowledge[0].implementation.code }}
+  =====Success code to former code with similar error ({{error_content}}):=====
+  {{ similar_error_knowledge[1].implementation.code }}
+  {% endfor %}
+  {% else %}
+  请回顾你上一次失败的 expression。结合相似错误与其解决方式，下面是给你的修正建议：
+  {{error_summary_critics}}
+  {% endif %}
+  {% endif %}
+
+  {% if similar_successful_factor_description is not none %}
+  下面给出一个相似成功因子的参考：
+  --------------Correct code to similar factors:---------------
+  =====Factor Description:=====
+  {{ similar_successful_factor_description }}
+  =====Factor Expression:=====
+  {{ similar_successful_expression }}
+  {% endif %}
+  {% if latest_attempt_to_latest_successful_execution is not none %}
+  你已经尝试修正上一次失败的 expression，但仍然报错。下面是最近一次尝试及其反馈。新的输出要尽量避免再次触发同类错误：
+  =====Your latest attempt=====
+  {{ latest_attempt_to_latest_successful_execution.implementation.code }}
+  =====Feedback to your latest attempt=====
+  {{ latest_attempt_to_latest_successful_execution.feedback }}
+  {% endif %}

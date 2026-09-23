@@ -10,6 +10,8 @@ import type {
   Factor,
   PromptPack,
   Task,
+  TacticalAnalyzeResponse,
+  TacticalConfig,
   TraceArtifact,
   TraceDetail,
   TraceRunSummary,
@@ -124,6 +126,42 @@ export async function listFactorLibraries() {
   return request<{ libraries: string[] }>('/api/v1/factors/libraries');
 }
 
+export interface LibraryCleanupItem {
+  path: string;
+  name: string;
+  kind: 'file' | 'dir';
+  category: string;
+  sizeBytes: number;
+  sizeText: string;
+}
+
+export interface LibraryCleanupPlan {
+  library: string;
+  suffix?: string | null;
+  items: LibraryCleanupItem[];
+  totalSizeBytes: number;
+  totalSizeText: string;
+}
+
+export interface LibraryCleanupResult {
+  library: string;
+  deleted: LibraryCleanupItem[];
+  failed: Array<{ path: string; error: string }>;
+  deletedSizeBytes: number;
+  deletedSizeText: string;
+  libraries: string[];
+}
+
+export async function previewLibraryCleanup(library: string) {
+  return request<LibraryCleanupPlan>(`/api/v1/factors/libraries/${encodeURIComponent(library)}/cleanup-preview`);
+}
+
+export async function deleteFactorLibrary(library: string) {
+  return request<LibraryCleanupResult>(`/api/v1/factors/libraries/${encodeURIComponent(library)}?confirm=true`, {
+    method: 'DELETE',
+  });
+}
+
 // ========================== Factor Cache API ==========================
 
 export interface CacheStatusResponse {
@@ -216,6 +254,26 @@ export async function getEvaluationArtifact(path: string) {
   return request<{ rows: Record<string, string>[]; name: string }>(`/api/v1/evaluation/artifact?path=${encodeURIComponent(path)}`);
 }
 
+// ========================== Tactical Factor API ==========================
+
+export async function getTacticalConfig() {
+  return request<{ config: TacticalConfig; defaults: TacticalConfig }>('/api/v1/tactical/config');
+}
+
+export async function updateTacticalConfig(update: Partial<TacticalConfig>) {
+  return request<{ config: TacticalConfig }>('/api/v1/tactical/config', {
+    method: 'PUT',
+    body: JSON.stringify(update),
+  });
+}
+
+export async function analyzeTacticalFactors(library: string) {
+  return request<TacticalAnalyzeResponse>('/api/v1/tactical/analyze', {
+    method: 'POST',
+    body: JSON.stringify({ library }),
+  });
+}
+
 export async function listDedupReports() {
   return request<{ reports: any[] }>('/api/v1/dedup/reports');
 }
@@ -253,9 +311,36 @@ export interface ExperimentDefaults {
   promptPack: PromptPack;
 }
 
+export interface PromptPackOption {
+  name: string;
+  label: string;
+  version: string;
+  outputLanguage: string;
+  strictJson: boolean;
+  description: string;
+  planningPromptFile: string;
+  factorPromptFile: string;
+  evolutionPromptFile?: string;
+  factorFeedbackPromptFile?: string;
+  coderPromptFile?: string;
+  qaPromptFile?: string;
+}
+
+export interface LlmModuleRoute {
+  tag: string;
+  label: string;
+  description: string;
+  modelName: string;
+  apiUrl: string;
+  apiKey: string;
+  hasApiKey?: boolean;
+}
+
 export interface SystemConfigResponse {
   env: Record<string, string>;
   experimentConfig: ExperimentDefaults;
+  promptPacks: PromptPackOption[];
+  llmModuleRoutes: LlmModuleRoute[];
   experimentYaml: string;
   factorLibraries: string[];
 }
@@ -266,11 +351,78 @@ export async function getSystemConfig() {
   );
 }
 
-export async function updateSystemConfig(update: Record<string, string | number | boolean>) {
+export async function getProviderModels(baseUrl: string, apiKey?: string, signal?: AbortSignal) {
+  const response = await fetch(`${BASE}/api/v1/system/models`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ baseUrl, apiKey }),
+    signal,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(typeof payload?.detail === 'string' ? payload.detail : '获取模型列表失败，请检查后端服务后重试');
+  }
+  return payload as ApiResponse<{ models: string[]; fetchedAt: string }>;
+
+}
+
+export async function updateSystemConfig(update: Record<string, unknown>) {
   return request('/api/v1/system/config', {
     method: 'PUT',
     body: JSON.stringify(update),
   });
+}
+
+// ========================== Prompt Flow API ==========================
+
+export interface PromptFlowNode {
+  id: string;
+  title: string;
+  stage: string;
+  stageLabel: string;
+  short: string;
+  long: string;
+  x: number;
+  y: number;
+  keys: string[];
+}
+
+export interface PromptFlowEdge {
+  from: string;
+  to: string;
+  label?: string;
+  colorClass?: 'blue' | 'green' | 'orange' | 'purple' | 'slate' | string;
+  dashed?: boolean;
+}
+
+export interface PromptFlowKey {
+  key: string;
+  file: string;
+  reader: string;
+  stage: string;
+  role: string;
+  value: string;
+  shared: boolean;
+  missing: boolean;
+  sourceType: 'pack' | 'shared';
+}
+
+export interface PromptFlowPack extends PromptPackOption {
+  active: boolean;
+  files: Record<string, string>;
+  keys: Record<string, PromptFlowKey>;
+}
+
+export interface PromptFlowResponse {
+  nodes: PromptFlowNode[];
+  edges: PromptFlowEdge[];
+  packs: PromptFlowPack[];
+  activePack: string;
+  notes: string[];
+}
+
+export async function getPromptFlow() {
+  return request<PromptFlowResponse>('/api/v1/prompts/flow');
 }
 
 // ========================== Health Check ==========================

@@ -1,6 +1,6 @@
 // Task status
 export type TaskStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
-export type PromptPack = 'zh_quant_v1' | 'en_default';
+export type PromptPack = string;
 
 // Execution phase
 export type ExecutionPhase =
@@ -147,6 +147,80 @@ export interface Factor {
   round: number;
   direction: string;
   createdAt: string;
+}
+
+export type TacticalLabel = '战术进攻型' | '高风险爆发型' | '稳健候选型' | '暂无战术价值' | '数据不足';
+
+export interface TacticalConfig {
+  enabled: boolean;
+  min_training_months: number;
+  min_validation_months: number;
+  min_trading_days_per_month: number;
+  strong_best_month_quantile: number;
+  burst_month_quantile: number;
+  high_volatility_quantile: number;
+  severe_loss_quantile: number;
+  severe_drawdown_quantile: number;
+  min_positive_month_ratio: number;
+  min_burst_month_count: number;
+}
+
+export interface TacticalPeriodMetrics {
+  valid_months: number;
+  mean_monthly_excess?: number | null;
+  monthly_excess_std?: number | null;
+  best_month_excess?: number | null;
+  worst_month_excess?: number | null;
+  max_monthly_drawdown?: number | null;
+  positive_month_ratio?: number | null;
+  burst_month_count?: number;
+  burst_month_ratio?: number | null;
+  recent_3m_excess?: number | null;
+  best_month_percentile?: number | null;
+  volatility_percentile?: number | null;
+  worst_month_percentile?: number | null;
+  drawdown_percentile?: number | null;
+}
+
+export interface TacticalMonthlyPoint {
+  month: string;
+  monthly_excess: number;
+  trading_days: number;
+  cumulative_excess: number;
+  is_burst?: boolean;
+}
+
+export interface TacticalPeriodResult {
+  label: TacticalLabel;
+  score: number;
+  metrics: TacticalPeriodMetrics;
+  monthly: TacticalMonthlyPoint[];
+  burstMonths: TacticalMonthlyPoint[];
+  reasons: string[];
+  thresholds: Record<string, number | null>;
+}
+
+export interface TacticalFactorResult {
+  factorId: string;
+  factorName: string;
+  factorExpression: string;
+  factorDescription: string;
+  evaluationStatus: EvaluationStatus | string;
+  training: TacticalPeriodResult;
+  validation?: TacticalPeriodResult | null;
+}
+
+export interface TacticalAnalyzeResponse {
+  library: string;
+  summary: {
+    total: number;
+    analyzed: number;
+    skipped: number;
+    labels: Record<TacticalLabel | string, number>;
+    thresholds: Record<string, Record<string, unknown>>;
+    skippedFactors?: Array<{ factorId: string; reason: string }>;
+  };
+  factors: TacticalFactorResult[];
 }
 
 // Backtest result

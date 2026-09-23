@@ -157,7 +157,7 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         normalized = evaluator._normalize_factor(factor, "fixture_factor")
         aligned = evaluator._align(normalized, panel, list(dates), "2023-01-03", "2023-01-12")
         period_panel = evaluator._period_panel(panel, "2023-01-03", "2023-01-12")
-        groups, excess = evaluator._group_returns(aligned, 1, period_panel)
+        groups, long_short, excess = evaluator._group_returns(aligned, 1, period_panel)
 
         self.assertTrue(np.isclose(groups.iloc[0]["G9_fee"], 2 * 0.0007))
         self.assertTrue(np.isclose(excess.iloc[0]["benchmark_fee"], 0.0))
@@ -166,6 +166,14 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         first_day = period_panel[period_panel["entry_date"] == excess.index[0]]
         self.assertTrue(np.isclose(excess.iloc[0]["benchmark_net_return"], first_day["oto_return"].mean()))
         self.assertTrue({f"G{index}" for index in range(10)}.issubset(groups.columns))
+        self.assertTrue(np.isclose(long_short.iloc[0]["long_group"], groups.iloc[0]["G9"] - groups.iloc[0]["G9_fee"]))
+        self.assertTrue(np.isclose(long_short.iloc[0]["short_group"], -groups.iloc[0]["G0"] - groups.iloc[0]["G0_fee"]))
+        self.assertTrue(
+            np.isclose(
+                long_short.iloc[0]["ls"],
+                (long_short.iloc[0]["long_group"] + long_short.iloc[0]["short_group"]) / 2.0,
+            )
+        )
 
     def test_rebalance_period_defaults_to_three_and_validates(self):
         evaluator = SingleFactorEvaluator(make_config(self.tmp_path), FakeMarketData(pd.DatetimeIndex([]), pd.DataFrame()))
@@ -184,11 +192,12 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         aligned = evaluator._align(normalized, panel, list(dates), "2023-01-03", "2023-01-12")
         period_panel = evaluator._period_panel(panel, "2023-01-03", "2023-01-12")
 
-        groups, excess = evaluator._group_returns(aligned, 1, period_panel)
+        groups, long_short, excess = evaluator._group_returns(aligned, 1, period_panel)
 
         self.assertEqual(groups["is_rebalance_day"].head(4).tolist(), [True, False, False, True])
         self.assertTrue((groups.loc[groups["is_rebalance_day"] == False].filter(regex=r"^G\d+_fee$") == 0.0).all().all())
         self.assertEqual(len(groups), period_panel["entry_date"].nunique())
+        self.assertEqual(len(long_short), len(groups))
         self.assertEqual(len(excess), len(groups))
         self.assertEqual(set(groups["rebalance_period_days"].unique()), {3})
 

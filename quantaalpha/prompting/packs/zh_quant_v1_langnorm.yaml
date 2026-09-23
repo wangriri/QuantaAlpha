@@ -1,0 +1,8 @@
+name: zh_quant_v1_langnorm
+label: 中文优化版 A1：语言统一
+version: "2026-09-16-a1-langnorm"
+output_language: zh-CN
+strict_json: true
+planning_prompt_file: planning_prompts_zh_langnorm.yaml
+factor_prompt_file: prompts_zh_langnorm.yaml
+description: 基于 zh_quant_v1 的消融实验 A1，仅做语言规范统一：推理、反馈和引导语使用中文；JSON key、函数名、变量名、表达式语法和指标 ID 保持英文。

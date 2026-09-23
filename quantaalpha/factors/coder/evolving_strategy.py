@@ -20,9 +20,10 @@ from quantaalpha.llm.config import LLM_SETTINGS
 from quantaalpha.llm.client import APIBackend
 from quantaalpha.core.utils import multiprocessing_wrapper
 from quantaalpha.core.conf import RD_AGENT_SETTINGS
+from quantaalpha.prompting import resolve_factor_coder_prompts_path, resolve_factor_qa_prompts_path
 
 code_template = CodeTemplate(template_path=Path(__file__).parent / "template.jinjia2")
-implement_prompts = Prompts(file_path=Path(__file__).parent / "prompts.yaml")
+implement_prompts = Prompts(file_path=resolve_factor_coder_prompts_path(Path(__file__).parent / "prompts.yaml"))
 
 class FactorMultiProcessEvolvingStrategy(MultiProcessEvolvingStrategy):
     def __init__(self, *args, **kwargs) -> None:
@@ -198,7 +199,7 @@ class FactorMultiProcessEvolvingStrategy(MultiProcessEvolvingStrategy):
 
 
 
-qa_implement_prompts = Prompts(file_path=Path(__file__).parent / "qa_prompts.yaml")
+qa_implement_prompts = Prompts(file_path=resolve_factor_qa_prompts_path(Path(__file__).parent / "qa_prompts.yaml"))
 class FactorParsingStrategy(MultiProcessEvolvingStrategy):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)

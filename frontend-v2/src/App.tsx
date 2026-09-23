@@ -3,8 +3,10 @@ import { HomePage } from '@/pages/HomePage';
 import { MiningDashboardPage } from '@/pages/MiningDashboardPage';
 import { FactorLibraryPage } from '@/pages/FactorLibraryPage';
 import { BacktestPage } from '@/pages/BacktestPage';
+import { TacticalFactorPage } from '@/pages/TacticalFactorPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { TraceViewerPage } from '@/pages/TraceViewerPage';
+import { PromptManagerPage } from '@/pages/PromptManagerPage';
 import { Layout } from '@/components/layout/Layout';
 import type { PageId } from '@/components/layout/Layout';
 import { ParticleBackground } from '@/components/ParticleBackground';
@@ -50,9 +52,19 @@ const AppContent: React.FC = () => {
           <BacktestPage />
         </Layout>
       </div>
+      <div style={{ display: currentPage === 'tactical' ? 'block' : 'none' }}>
+        <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+          <TacticalFactorPage />
+        </Layout>
+      </div>
       <div style={{ display: currentPage === 'trace' ? 'block' : 'none' }}>
         <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
           <TraceViewerPage activeRunId={miningTask?.traceRunId || miningTask?.config?.traceRunId} />
+        </Layout>
+      </div>
+      <div style={{ display: currentPage === 'prompts' ? 'block' : 'none' }}>
+        <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+          <PromptManagerPage />
         </Layout>
       </div>
       <div style={{ display: currentPage === 'settings' ? 'block' : 'none' }}>

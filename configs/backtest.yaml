@@ -11,10 +11,10 @@
 random_seed: 42
 
 experiment:
-  name: "backtest_v2_experiment"
-  recorder: "backtest_v2_recorder"
-  output_dir: "data/results/backtest_v2_results"
-  output_metrics_file: "backtest_metrics.json"
+  name: backtest_v2_experiment
+  recorder: backtest_v2_recorder
+  output_dir: data/results/backtest_v2_results
+  output_metrics_file: backtest_metrics.json
 
 ######################################################################
 # 1. Factor source (factor_source)
@@ -22,18 +22,18 @@ experiment:
 
 factor_source:
   # type: alpha158 | alpha158_20 | alpha360 | custom | combined
-  type: "alpha158_20"
+  type: alpha158_20
 
   # Custom factor library (when type is "custom" or "combined")
   custom:
     json_files: []
     # quality_filter: high_quality | medium_quality | low_quality | null
-    quality_filter: null
-    max_factors: null
+    quality_filter:
+    max_factors:
     use_llm_for_incompatible: true
 
   combined:
-    official_source: "alpha158_20"
+    official_source: alpha158_20
     include_custom: true
 
 ######################################################################
@@ -41,57 +41,57 @@ factor_source:
 ######################################################################
 
 data:
-  provider_uri: "~/.qlib/qlib_data/cn_data"
-  region: "cn"
-  market: "csi300"
-  start_time: "2018-01-01"
-  end_time: "2025-12-26"
+  provider_uri: ~/.qlib/qlib_data/cn_data
+  region: cn
+  market: csi300
+  start_time: '2018-01-01'
+  end_time: '2025-12-26'
 
 ######################################################################
 # 3. Dataset and preprocessing (dataset)
 ######################################################################
 
 dataset:
-  label: "Ref($close, -2) / Ref($close, -1) - 1"
+  label: Ref($close, -2) / Ref($close, -1) - 1
 
   learn_processors:
-    - class: "Fillna"
+    - class: Fillna
       kwargs:
-        fields_group: "feature"
-    - class: "ProcessInf"
-    - class: "DropnaLabel"
-    - class: "CSRankNorm"
+        fields_group: feature
+    - class: ProcessInf
+    - class: DropnaLabel
+    - class: CSRankNorm
       kwargs:
-        fields_group: "feature"
-    - class: "CSRankNorm"
+        fields_group: feature
+    - class: CSRankNorm
       kwargs:
-        fields_group: "label"
+        fields_group: label
 
   infer_processors:
-    - class: "Fillna"
+    - class: Fillna
       kwargs:
-        fields_group: "feature"
-    - class: "ProcessInf"
-    - class: "CSRankNorm"
+        fields_group: feature
+    - class: ProcessInf
+    - class: CSRankNorm
       kwargs:
-        fields_group: "feature"
-    - class: "CSRankNorm"
+        fields_group: feature
+    - class: CSRankNorm
       kwargs:
-        fields_group: "label"
+        fields_group: label
 
   segments:
-    train: ["2018-01-01", "2020-12-31"]
-    valid: ["2021-01-01", "2021-12-31"]
-    test:  ["2022-01-01", "2025-12-26"]
+    train: ['2018-01-01', '2020-12-31']
+    valid: ['2021-01-01', '2021-12-31']
+    test: ['2022-01-01', '2025-12-26']
 
 ######################################################################
 # 4. Model (model)
 ######################################################################
 
 model:
-  type: "lgb"
+  type: lgb
   params:
-    loss: "mse"
+    loss: mse
     learning_rate: 0.1
     max_depth: 8
     num_leaves: 210
@@ -113,21 +113,21 @@ model:
 
 backtest:
   strategy:
-    class: "TopkDropoutStrategy"
-    module_path: "qlib.contrib.strategy"
+    class: TopkDropoutStrategy
+    module_path: qlib.contrib.strategy
     kwargs:
-      signal: "<PRED>"
+      signal: <PRED>
       topk: 50
       n_drop: 5
 
   backtest:
-    start_time: "2022-01-01"
-    end_time: "2025-12-26"
+    start_time: '2022-01-01'
+    end_time: '2025-12-26'
     account: 100000000
-    benchmark: "SH000300"
+    benchmark: SH000300
     exchange_kwargs:
       limit_threshold: 0.095
-      deal_price: "open"
+      deal_price: open
       open_cost: 0.0005
       close_cost: 0.0015
       min_cost: 5
@@ -141,7 +141,7 @@ llm:
   timeout: 300
   max_retries: 3
   cache_results: true
-  cache_dir: "data/results/factor_cache"
+  cache_dir: data/results/factor_cache
   # Auto-extract cache from main program logs; set false to avoid scanning many experiment dirs
   auto_extract_cache: false
   debug: false
@@ -151,7 +151,7 @@ llm:
 ######################################################################
 
 factor_calculation:
-  output_dir: "data/results/computed_factors"
+  output_dir: data/results/computed_factors
   save_intermediate: true
   n_jobs: 4
-  data_file: null  # When null, data is fetched from qlib
+  data_file:       # When null, data is fetched from qlib

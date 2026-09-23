@@ -1,0 +1,192 @@
+mutation:
+  system: |
+    你是一名量化研究中的策略演化专家，擅长在已有父分支基础上生成新的探索方向。
+
+    你的任务是基于父策略，生成一个新的 mutation 方向。
+
+    在当前版本中，mutation 的核心要求是：
+    1. 新方向必须与父策略存在清晰差异，避免重复探索已经饱和的子空间。
+    2. 差异可以来自不同的市场假设、不同的数据维度、不同的特征结构、不同的行为机制或不同的条件约束。
+    3. 新方向仍需保持可实现、可检验、可由当前研究框架继续转化为因子。
+    4. 不要把“差异”误写成仅仅更换窗口、阈值或参数。
+
+    输出时请保持 JSON key 为英文，说明性 value 使用中文。
+
+  user: |
+    请基于以下父策略信息，生成一个新的 mutation 研究方向。
+
+    ## Parent Strategy Information
+
+    ### Hypothesis
+    {parent_hypothesis}
+
+    ### Factor Expressions
+    {parent_factors}
+
+    ### Backtest Metrics
+    {parent_metrics}
+
+    ### Evaluation Feedback
+    {parent_feedback}
+
+    ---
+
+    ## Requirements
+
+    请输出一个与父策略具有明确差异的新方向，并包含以下字段：
+
+    1. **New Hypothesis**：新的待检验市场假设
+    2. **Exploration Direction**：新的研究切入点或特征构造方向
+    3. **Orthogonality Reasoning**：说明为什么该方向与父策略有实质差异
+    4. **Expected Characteristics**：预期该方向可能产出的因子特征
+
+    请注意：
+    - 不要把新方向写成已经被证明有效。
+    - 不要只通过参数微调制造“新方向”。
+    - 保持技术上可实现。
+
+    Output must be valid JSON.
+    All JSON keys must remain exactly in English as specified.
+    All explanatory string values should be written in Chinese.
+
+    Example JSON:
+    {{
+      "new_hypothesis": "用中文描述新的待检验假设",
+      "exploration_direction": "用中文描述新的研究方向",
+      "orthogonality_reason": "用中文说明与父策略的实质差异",
+      "expected_characteristics": "用中文说明预期特征"
+    }}
+
+  simple_user: |
+    请根据以下信息生成一个新的因子挖掘假设：
+
+    Parent Hypothesis: {parent_hypothesis}
+
+    Parent Factors: {parent_factors}
+
+    请直接输出一条新的待检验假设。保持中文描述，但不要翻译字段名、函数名或表达式 token。
+
+  suffix_template: |
+    ---
+
+    ## Mutation Round Guidance
+
+    这是一个 mutation 探索轮次。你需要在父策略基础上生成新的研究假设，但必须避免重复父分支已经覆盖的子空间。
+
+    ### Parent Strategy Summary
+    {parent_summary}
+
+    ### Mutation Direction Suggestions
+    - **New Hypothesis Direction**: {new_hypothesis}
+    - **Exploration Dimension**: {exploration_direction}
+    - **Orthogonality Reasoning**: {orthogonality_reason}
+
+    ### Important Notes
+    1. 新假设必须与父策略存在实质差异，而不是参数级微调。
+    2. 优先探索父策略尚未覆盖的市场机制、结构关系或条件依赖。
+    3. 生成的新因子应尽量降低与父分支已有因子的重复度。
+
+    请根据以上 mutation guidance 继续提出新的假设。
+
+  fallback_templates:
+    - "检验价格动量失效后是否出现更稳定的均值回归信号"
+    - "检验量价非线性偏离是否包含未来收益信息"
+    - "检验不同波动阶段下趋势切换的截面预测能力"
+    - "检验流动性约束与价格路径交互是否形成有效 alpha"
+    - "检验波动率状态切换是否改变传统价量信号的方向与强度"
+    - "检验板块轮动背景下个股相对位置是否产生附加 alpha"
+
+crossover:
+  system: |
+    你是一名量化研究中的策略融合专家，擅长结合多个父策略的优势生成新的混合研究方向。
+
+    你的任务是分析多个父策略，识别它们的优势、弱点和互补关系，并生成一个新的 hybrid strategy。
+
+    在融合时请重点考虑：
+    1. 每个父策略的核心假设和市场逻辑
+    2. 哪些特征结构表现较好
+    3. 父策略之间是否存在互补性或协同空间
+    4. 如何避免把多个父策略共同的缺陷一起继承下来
+
+    输出时请保持 JSON key 为英文，说明性 value 使用中文。
+
+  user: |
+    请基于以下多个父策略，生成一个新的 crossover 融合方向。
+
+    ## Parent Strategy Information
+
+    {parent_summaries}
+
+    ---
+
+    ## Requirements
+
+    请输出一个融合多个父策略优势的新方向，并包含以下字段：
+
+    1. **Hybrid Hypothesis**：融合后的待检验市场假设
+    2. **Fusion Logic**：说明如何结合各父策略的优势
+    3. **Innovation Points**：说明新方向相对于父策略的新增特征
+    4. **Expected Benefits**：说明为什么该融合方向可能优于单个父策略
+
+    请注意：
+    - 保持可实现、可检验，不要写成已经成立的结论。
+    - 不要机械拼接父策略表述，要明确融合后的新机制。
+
+    Output must be valid JSON.
+    All JSON keys must remain exactly in English as specified.
+    All explanatory string values should be written in Chinese.
+
+    Example JSON:
+    {{
+      "hybrid_hypothesis": "用中文描述融合后的新假设",
+      "fusion_logic": "用中文说明融合逻辑",
+      "innovation_points": "用中文说明新特征",
+      "expected_benefits": "用中文说明预期优势"
+    }}
+
+  simple_user: |
+    请综合以下父策略的优势，生成一个新的 hybrid hypothesis：
+
+    {parent_summaries}
+
+    请直接输出中文假设内容，不要翻译函数名、表达式 token 或字段名。
+
+  parent_template: |
+    ### Parent {idx}: {phase_name}
+    **Direction ID**: {direction_id}
+    **Hypothesis**: {hypothesis}
+    **Factors**:
+    {factors}
+    **Metrics**:
+    {metrics}
+    **Feedback**:
+    {feedback}
+    ---
+
+  suffix_template: |
+    ---
+
+    ## Crossover Round Guidance
+
+    这是一个 crossover 融合探索轮次。你需要在多个父策略基础上生成新的混合研究方向。
+
+    ### Parent Strategy Summaries
+    {parent_summaries}
+
+    ### Fusion Direction Suggestions
+    - **Hybrid Hypothesis Direction**: {hybrid_hypothesis}
+    - **Fusion Logic**: {fusion_logic}
+    - **Innovation Points**: {innovation_points}
+
+    ### Important Notes
+    1. 新假设应融合多个父策略的优势，而不是简单拼接措辞。
+    2. 尽量避免继承多个父策略共有的弱点。
+    3. 优先寻找真正具有协同效应的组合机制。
+    4. 生成的新因子应能够体现融合后的综合特征。
+
+    请根据以上 crossover guidance 提出融合假设。
+
+  phase_names:
+    original: "Original Round"
+    mutation: "Mutation Round"
+    crossover: "Crossover Round"

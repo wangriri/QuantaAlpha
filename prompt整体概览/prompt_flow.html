@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QuantaAlpha Prompt Flow</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: #fffaf2;
+      --ink: #1f2a2e;
+      --muted: #5e6a6e;
+      --line: #cdbfa9;
+      --accent: #0d6b57;
+      --accent-2: #b4572a;
+      --accent-3: #2f4f9f;
+      --card: #fffdf8;
+      --shadow: 0 14px 35px rgba(34, 27, 20, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(13, 107, 87, 0.08), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(180, 87, 42, 0.08), transparent 32%),
+        var(--bg);
+    }
+
+    .page {
+      display: grid;
+      grid-template-columns: minmax(860px, 1.2fr) minmax(360px, 0.8fr);
+      min-height: 100vh;
+      gap: 20px;
+      padding: 20px;
+    }
+
+    .canvas-panel,
+    .detail-panel {
+      background: var(--panel);
+      border: 1px solid rgba(112, 92, 68, 0.12);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel-head {
+      padding: 18px 22px 12px;
+      border-bottom: 1px solid rgba(112, 92, 68, 0.12);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 250, 242, 0.95));
+    }
+
+    .panel-head h1,
+    .panel-head h2 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    .panel-head p {
+      margin: 8px 0 0;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    .flow-wrap {
+      position: relative;
+      min-height: 1640px;
+      padding: 20px;
+      overflow: auto;
+    }
+
+    .flow-grid {
+      position: relative;
+      width: 1600px;
+      min-width: 1600px;
+      height: 1600px;
+      border-radius: 20px;
+      background:
+        linear-gradient(to right, rgba(205, 191, 169, 0.16) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(205, 191, 169, 0.16) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,250,242,0.84));
+      background-size: 34px 34px, 34px 34px, auto;
+      overflow: hidden;
+    }
+
+    svg.edges {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .edge-path {
+      fill: none;
+      stroke: rgba(94, 106, 110, 0.68);
+      stroke-width: 2.5;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+
+    .edge-path.edge-green {
+      stroke: rgba(13, 107, 87, 0.86);
+    }
+
+    .edge-path.edge-blue {
+      stroke: rgba(47, 79, 159, 0.84);
+    }
+
+    .edge-path.edge-orange {
+      stroke: rgba(180, 87, 42, 0.88);
+    }
+
+    .edge-path.edge-purple {
+      stroke: rgba(122, 90, 248, 0.84);
+    }
+
+    .edge-path.edge-dashed {
+      stroke-dasharray: 8 7;
+    }
+
+    .edge-label {
+      font-size: 11px;
+      fill: rgba(94, 106, 110, 0.88);
+    }
+
+    .node {
+      position: absolute;
+      width: 230px;
+      min-height: 122px;
+      padding: 14px 14px 12px;
+      background: var(--card);
+      border: 1px solid rgba(112, 92, 68, 0.16);
+      border-radius: 18px;
+      box-shadow: 0 10px 22px rgba(34, 27, 20, 0.08);
+      cursor: pointer;
+      transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+    }
+
+    .node:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 28px rgba(34, 27, 20, 0.12);
+    }
+
+    .node.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(13, 107, 87, 0.12), 0 18px 30px rgba(34, 27, 20, 0.14);
+    }
+
+    .node.stage-planning { border-left: 6px solid var(--accent-3); }
+    .node.stage-hypothesis { border-left: 6px solid var(--accent); }
+    .node.stage-factor { border-left: 6px solid var(--accent-2); }
+    .node.stage-eval { border-left: 6px solid #7a5af8; }
+    .node.stage-evolution { border-left: 6px solid #9d7d22; }
+
+    .node-stage {
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .node-title {
+      margin: 6px 0 8px;
+      font-size: 17px;
+      line-height: 1.3;
+      font-weight: 700;
+    }
+
+    .node-desc {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .node-keys {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .key-chip {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(13, 107, 87, 0.08);
+      color: var(--accent);
+      font-size: 11px;
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.72);
+      border: 1px solid rgba(112, 92, 68, 0.1);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .detail-scroll {
+      height: calc(100vh - 92px);
+      overflow: auto;
+      padding: 18px 20px 26px;
+    }
+
+    .detail-empty {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+      padding: 16px 4px 0;
+    }
+
+    .detail-card {
+      margin-bottom: 18px;
+      padding: 16px 16px 14px;
+      background: rgba(255,255,255,0.7);
+      border: 1px solid rgba(112, 92, 68, 0.12);
+      border-radius: 16px;
+    }
+
+    .detail-card h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
+
+    .detail-card .meta {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .detail-card .summary {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.72;
+    }
+
+    details.key-detail {
+      margin: 10px 0 0;
+      background: rgba(255, 253, 248, 0.95);
+      border: 1px solid rgba(112, 92, 68, 0.14);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    details.key-detail summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 14px;
+      font-weight: 700;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    details.key-detail summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .key-meta {
+      padding: 0 14px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .key-meta div + div {
+      margin-top: 4px;
+    }
+
+    pre.key-value {
+      margin: 0;
+      padding: 14px;
+      background: #f8f3eb;
+      border-top: 1px solid rgba(112, 92, 68, 0.1);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.65;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    @media (max-width: 1360px) {
+      .page {
+        grid-template-columns: 1fr;
+      }
+
+      .detail-scroll {
+        height: auto;
+        max-height: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="canvas-panel">
+      <div class="panel-head">
+        <h1>QuantaAlpha Prompt Flow</h1>
+        <p>节点按实际流程分层展示。每个节点会标出当前阶段使用的 prompt key，点击节点后在右侧展开 key 的职责说明与完整 value。</p>
+        <div class="legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:#2f4f9f"></span>Planning</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#0d6b57"></span>Hypothesis</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#b4572a"></span>Factor / DSL</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#7a5af8"></span>Coder / Eval / Feedback</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:#9d7d22"></span>Evolution</span>
+        </div>
+      </div>
+      <div class="flow-wrap">
+        <div class="flow-grid" id="flow-grid">
+          <svg class="edges" id="edges" viewBox="0 0 1100 1220" preserveAspectRatio="none">
+            <defs>
+              <marker id="arrow-gray" markerWidth="9" markerHeight="9" refX="6" refY="6" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(94,106,110,0.72)"></path>
+              </marker>
+              <marker id="arrow-green" markerWidth="9" markerHeight="9" refX="6" refY="6" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(13,107,87,0.86)"></path>
+              </marker>
+              <marker id="arrow-blue" markerWidth="9" markerHeight="9" refX="6" refY="6" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(47,79,159,0.86)"></path>
+              </marker>
+              <marker id="arrow-orange" markerWidth="9" markerHeight="9" refX="6" refY="6" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(180,87,42,0.88)"></path>
+              </marker>
+              <marker id="arrow-purple" markerWidth="9" markerHeight="9" refX="6" refY="6" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(122,90,248,0.86)"></path>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <aside class="detail-panel">
+      <div class="panel-head">
+        <h2>节点详情</h2>
+        <p>右侧会展示节点职责、所用 key 的调用位置，以及每个 key 的具体 prompt value。</p>
+      </div>
+      <div class="detail-scroll" id="detail-scroll">
+        <div class="detail-empty">
+          先点击左侧任一节点。<br />
+          推荐先看 `Planning`、`Hypothesis Generation`、`Factor Expression Generation` 三个节点，再看 `Feedback`、`Mutation` 和 `Crossover`。
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="./prompt_flow_data.js"></script>
+  <script>
+    const data = window.PROMPT_FLOW_DATA || { nodes: [], edges: [], keys: {} };
+
+    const gridEl = document.getElementById("flow-grid");
+    const edgesEl = document.getElementById("edges");
+    const detailEl = document.getElementById("detail-scroll");
+
+    function createNode(node) {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = `node stage-${node.stage}`;
+      el.style.left = `${node.x}px`;
+      el.style.top = `${node.y}px`;
+      el.dataset.nodeId = node.id;
+
+      el.innerHTML = `
+        <div class="node-stage">${node.stageLabel}</div>
+        <div class="node-title">${node.title}</div>
+        <p class="node-desc">${node.short}</p>
+        <div class="node-keys">
+          ${node.keys.map((key) => `<span class="key-chip" title="${key}">${key}</span>`).join("")}
+        </div>
+      `;
+
+      el.addEventListener("click", () => selectNode(node.id));
+      gridEl.appendChild(el);
+      return el;
+    }
+
+    function getNodeElement(nodeId) {
+      return gridEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+    }
+
+    function getNodeRect(nodeId) {
+      const el = getNodeElement(nodeId);
+      if (!el) return null;
+      return {
+        x: el.offsetLeft,
+        y: el.offsetTop,
+        w: el.offsetWidth,
+        h: el.offsetHeight,
+        left: el.offsetLeft,
+        top: el.offsetTop,
+        right: el.offsetLeft + el.offsetWidth,
+        bottom: el.offsetTop + el.offsetHeight,
+        cx: el.offsetLeft + el.offsetWidth / 2,
+        cy: el.offsetTop + el.offsetHeight / 2,
+      };
+    }
+
+    function getAnchor(rect, side, pad = 12, shift = 0) {
+      switch (side) {
+        case "left":
+          return { x: rect.left - pad, y: rect.cy + shift };
+        case "right":
+          return { x: rect.right + pad, y: rect.cy + shift };
+        case "top":
+          return { x: rect.cx + shift, y: rect.top - pad };
+        case "bottom":
+          return { x: rect.cx + shift, y: rect.bottom + pad };
+        default:
+          return { x: rect.right + pad, y: rect.cy + shift };
+      }
+    }
+
+    function orthogonalizePoints(points) {
+      if (!points.length) return [];
+      const out = [points[0]];
+      for (let i = 1; i < points.length; i += 1) {
+        const prev = out[out.length - 1];
+        const curr = points[i];
+        if (prev.x !== curr.x && prev.y !== curr.y) {
+          out.push({ x: curr.x, y: prev.y });
+        }
+        out.push(curr);
+      }
+      return out;
+    }
+
+    function pathFromPoints(points) {
+      const orthPoints = orthogonalizePoints(points);
+      if (!orthPoints.length) return "";
+      let d = `M ${orthPoints[0].x} ${orthPoints[0].y}`;
+      for (let i = 1; i < orthPoints.length; i += 1) {
+        d += ` L ${orthPoints[i].x} ${orthPoints[i].y}`;
+      }
+      return d;
+    }
+
+    function getEdgeRoute(fromRect, toRect) {
+      const gap = 18;
+
+      if (toRect.left >= fromRect.right + gap) {
+        const start = getAnchor(fromRect, "right", 10);
+        const end = getAnchor(toRect, "left", 14);
+        const midX = Math.round((start.x + end.x) / 2);
+        return {
+          start,
+          end,
+          points: [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end],
+          label: { x: midX, y: Math.min(start.y, end.y) - 10 },
+        };
+      }
+
+      if (toRect.top >= fromRect.bottom + gap) {
+        const start = getAnchor(fromRect, "bottom", 10);
+        const end = getAnchor(toRect, "top", 14);
+        const midY = Math.round((start.y + end.y) / 2);
+        return {
+          start,
+          end,
+          points: [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end],
+          label: { x: Math.min(start.x, end.x) - 8, y: midY - 8 },
+        };
+      }
+
+      if (toRect.right <= fromRect.left - gap) {
+        const start = getAnchor(fromRect, "left", 10);
+        const end = getAnchor(toRect, "right", 14);
+        const midX = Math.round((start.x + end.x) / 2);
+        return {
+          start,
+          end,
+          points: [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end],
+          label: { x: midX, y: Math.min(start.y, end.y) - 10 },
+        };
+      }
+
+      const targetAbove = toRect.cy < fromRect.cy;
+      const start = targetAbove
+        ? getAnchor(fromRect, "top", 10)
+        : getAnchor(fromRect, "bottom", 10);
+      const end = targetAbove
+        ? getAnchor(toRect, "bottom", 14)
+        : getAnchor(toRect, "top", 14);
+      const midY = Math.round((start.y + end.y) / 2);
+
+      return {
+        start,
+        end,
+        points: [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end],
+        label: { x: Math.min(start.x, end.x) - 8, y: midY - 8 },
+      };
+    }
+
+    function drawEdges() {
+      const width = gridEl.clientWidth;
+      const height = gridEl.clientHeight;
+      edgesEl.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+      const defs = edgesEl.querySelector("defs");
+      edgesEl.innerHTML = "";
+      if (defs) {
+        edgesEl.appendChild(defs);
+      }
+
+      const fragments = [];
+      for (const edge of data.edges) {
+        const fromRect = getNodeRect(edge.from);
+        const toRect = getNodeRect(edge.to);
+        if (!fromRect || !toRect) continue;
+
+        let route;
+        if (edge.waypoints && edge.waypoints.length) {
+          const start = getAnchor(fromRect, edge.startSide || "right", edge.startPad ?? 12, edge.startShift ?? 0);
+          const end = getAnchor(toRect, edge.endSide || "left", edge.endPad ?? 12, edge.endShift ?? 0);
+          route = {
+            points: [start, ...edge.waypoints, end],
+            label: edge.labelPos || edge.waypoints[Math.max(0, Math.floor(edge.waypoints.length / 2) - 1)] || { x: start.x, y: start.y - 10 },
+          };
+        } else {
+          route = getEdgeRoute(fromRect, toRect);
+        }
+
+        const d = pathFromPoints(route.points);
+        const classes = ['edge-path'];
+        if (edge.colorClass) classes.push(`edge-${edge.colorClass}`);
+        if (edge.dashed) classes.push('edge-dashed');
+        const marker = edge.marker || (edge.colorClass ? `arrow-${edge.colorClass}` : 'arrow-gray');
+        fragments.push(`<path class="${classes.join(' ')}" d="${d}" marker-end="url(#${marker})"></path>`);
+
+        if (edge.label) {
+          const lx = route.label?.x ?? route.points[0].x;
+          const ly = route.label?.y ?? (route.points[0].y - 10);
+          const anchor = edge.labelAnchor || (lx < width / 2 ? "start" : "middle");
+          fragments.push(`<text class="edge-label" x="${lx}" y="${ly}" text-anchor="${anchor}">${edge.label}</text>`);
+        }
+      }
+      edgesEl.insertAdjacentHTML("beforeend", fragments.join(""));
+    }
+
+    function renderDetail(node) {
+      const keyBlocks = node.keys.map((keyId, idx) => {
+        const key = data.keys[keyId];
+        if (!key) return "";
+        return `
+          <details class="key-detail" ${idx === 0 ? "open" : ""}>
+            <summary>${keyId}<span>${key.file || ""}</span></summary>
+            <div class="key-meta">
+              <div><strong>被谁读取：</strong>${key.reader}</div>
+              <div><strong>流程位置：</strong>${key.stage}</div>
+              <div><strong>职责：</strong>${key.role}</div>
+            </div>
+            <pre class="key-value">${escapeHtml(key.value)}</pre>
+          </details>
+        `;
+      }).join("");
+
+      detailEl.innerHTML = `
+        <div class="detail-card">
+          <h3>${node.title}</h3>
+          <p class="meta"><strong>阶段：</strong>${node.stageLabel}</p>
+          <p class="summary">${node.long}</p>
+        </div>
+        ${keyBlocks}
+      `;
+    }
+
+    function selectNode(nodeId) {
+      const node = data.nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+      document.querySelectorAll(".node").forEach((el) => {
+        el.classList.toggle("active", el.dataset.nodeId === nodeId);
+      });
+      renderDetail(node);
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    data.nodes.forEach(createNode);
+    drawEdges();
+    window.addEventListener("resize", drawEdges);
+    if (data.nodes.length) {
+      selectNode(data.nodes[0].id);
+    }
+  </script>
+</body>
+</html>

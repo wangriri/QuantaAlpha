@@ -53,6 +53,7 @@ const previewLabels: Record<string, string> = {
   input: '输入',
   userPrompt: '用户提示词',
   rawOutput: '原始输出',
+  用户输入: '用户输入',
   研究方向: '研究方向',
   研究假设: '研究假设',
   观察: '观察',
@@ -113,6 +114,11 @@ const asText = (value: unknown): string => {
   if (typeof value === 'number') return Number.isFinite(value) ? value.toFixed(Math.abs(value) < 1 ? 4 : 3) : '--';
   if (typeof value === 'string') return value;
   return JSON.stringify(value, null, 2);
+};
+
+const formatStatus = (value?: string) => {
+  if (!value) return '--';
+  return statusLabels[value] || value;
 };
 
 const iconFor = (node: TraceNode) => {
@@ -281,12 +287,17 @@ const SectionShell: React.FC<{
   badge?: string;
   collapsed: boolean;
   onToggle: () => void;
+  selected?: boolean;
+  onSelect?: () => void;
   children: React.ReactNode;
-}> = ({ title, subtitle, badge, collapsed, onToggle, children }) => (
-  <section className="border border-border bg-background/70">
+}> = ({ title, subtitle, badge, collapsed, onToggle, selected = false, onSelect, children }) => (
+  <section className={`border bg-background/70 transition-shadow ${selected ? 'border-primary ring-2 ring-primary/40' : 'border-border'}`}>
     <button
       type="button"
-      onClick={onToggle}
+      onClick={() => {
+        onSelect?.();
+        onToggle();
+      }}
       className="flex w-full items-center justify-between gap-3 border-b border-border bg-secondary/50 px-4 py-3 text-left transition-colors hover:bg-secondary"
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -390,6 +401,20 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
     [detail],
   );
 
+  const directionByTaskId = useMemo(() => {
+    const nodes = detail?.nodes || [];
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const mapping = new Map<string, TraceNode>();
+    (detail?.edges || []).forEach((edge) => {
+      const source = nodeById.get(edge.from);
+      const target = nodeById.get(edge.to);
+      if (edge.type === 'USES_DIRECTION' && source?.type === 'direction' && target?.type === 'task') {
+        mapping.set(target.id, source);
+      }
+    });
+    return mapping;
+  }, [detail]);
+
   const roundGroups = useMemo(() => {
     const nodes = detail?.nodes || [];
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -447,6 +472,38 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
     const group = roundGroups.find((item) => item.round.id === selectedRoundId);
     return group?.round.label || '选择轮次';
   }, [roundGroups, selectedRoundId]);
+
+  const getRoundSubtitle = (round: TraceNode) => {
+    const fallback = `Round ${round.round_idx ?? '--'} ${round.phase || ''}`.trim();
+    const subtitle = round.preview?.研究方向 || round.direction_text || fallback;
+    return subtitle && subtitle !== round.label ? subtitle : undefined;
+  };
+
+  const getDirectionText = (task?: TraceNode | null) => {
+    if (!task || task.type !== 'task') return '';
+    const direction = directionByTaskId.get(task.id);
+    return direction?.direction_text || direction?.preview?.研究方向 || direction?.label || '';
+  };
+
+  const getTaskSubtitle = (task: TraceNode) => {
+    const directionText = getDirectionText(task);
+    if (directionText) return `对应方向：${directionText}`;
+    return task.preview?.研究方向 || task.direction_text || '暂未找到对应研究方向';
+  };
+
+  const selectedDirectionText = useMemo(
+    () => getDirectionText(selectedNode),
+    [directionByTaskId, selectedNode],
+  );
+
+  const selectedPreviewEntries = useMemo(() => {
+    if (!selectedNode?.preview) return [];
+    const preview = { ...selectedNode.preview };
+    if (preview.status && selectedNode.status && preview.status !== selectedNode.status) {
+      preview.status = formatStatus(selectedNode.status);
+    }
+    return Object.entries(preview);
+  }, [selectedNode]);
 
   useEffect(() => {
     if (selectedRoundId === 'all') return;
@@ -541,27 +598,27 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
             <SectionShell
               key={round.id}
               title={round.label}
-              subtitle={round.preview?.研究方向 || round.direction_text || `Round ${round.round_idx ?? '--'} ${round.phase || ''}`}
+              subtitle={getRoundSubtitle(round)}
               badge={`${tasks.length} 个任务`}
               collapsed={!!collapsedSections[round.id]}
               onToggle={() => toggleSection(round.id)}
+              selected={round.id === selectedNodeId}
+              onSelect={() => setSelectedNodeId(round.id)}
             >
-              <div className="border-l-2 border-primary/20 pl-4">
-                <NodeButton node={round} selected={round.id === selectedNodeId} onClick={() => setSelectedNodeId(round.id)} />
-              </div>
-              <div className="mt-4 space-y-3">
+              <div className="space-y-3">
                 {tasks.map(({ task, children }) => (
                   <SectionShell
                     key={task.id}
                     title={task.label}
-                    subtitle={task.preview?.研究方向 || task.direction_text || '任务下按文件/graph 关系挂载假设、公式、候选因子、校验、因子值和评价'}
+                    subtitle={getTaskSubtitle(task)}
                     badge={`${children.length} 个直接子节点`}
                     collapsed={!!collapsedSections[task.id]}
                     onToggle={() => toggleSection(task.id)}
+                    selected={task.id === selectedNodeId}
+                    onSelect={() => setSelectedNodeId(task.id)}
                   >
                     <div className="border-l-2 border-border pl-4">
-                      <NodeButton node={task} selected={task.id === selectedNodeId} onClick={() => setSelectedNodeId(task.id)} />
-                      <div className="mt-3 space-y-2">
+                      <div className="space-y-2">
                         {children.map((item) => (
                           <TraceTreeNode
                             key={item.node.id}
@@ -596,17 +653,23 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>{typeLabels[selectedNode.type] || selectedNode.type}</span>
                 <span>/</span>
-                <span>{selectedNode.status || '--'}</span>
+                <span>{formatStatus(selectedNode.status)}</span>
               </div>
               <h3 className="mt-1 break-words text-xl font-semibold">{selectedNode.label}</h3>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">{selectedNode.explanation}</p>
+              {selectedDirectionText && (
+                <div className="mt-3 border-l-2 border-primary/50 bg-primary/5 px-3 py-2">
+                  <div className="text-xs font-medium text-primary">对应方向</div>
+                  <div className="mt-1 text-sm leading-6 text-foreground">{selectedDirectionText}</div>
+                </div>
+              )}
             </div>
 
             <section>
               <h4 className="mb-2 text-sm font-semibold">关键输入 / 输出</h4>
-              {selectedNode.preview && Object.keys(selectedNode.preview).length ? (
+              {selectedPreviewEntries.length ? (
                 <div className="space-y-3">
-                  {Object.entries(selectedNode.preview).map(([key, value]) => (
+                  {selectedPreviewEntries.map(([key, value]) => (
                     <div key={key} className="border-t border-border pt-3">
                       <div className="text-xs font-medium text-muted-foreground">{previewLabels[key] || key}</div>
                       <DetailValue value={value} />

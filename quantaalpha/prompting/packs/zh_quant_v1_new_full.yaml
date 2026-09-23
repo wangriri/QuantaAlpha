@@ -1,0 +1,12 @@
+name: zh_quant_v1_new_full
+label: 中文优化版 A7：完整新版
+version: "2026-09-21-a7-new-full"
+output_language: zh-CN
+strict_json: true
+planning_prompt_file: planning_prompts_zh_new_full.yaml
+factor_prompt_file: prompts_zh_new_full.yaml
+evolution_prompt_file: evolution_prompts_zh_new_full.yaml
+factor_feedback_prompt_file: prompts_zh_new_full.yaml
+coder_prompt_file: prompts_zh_new_full.yaml
+qa_prompt_file: qa_prompts_zh_new_full.yaml
+description: 基于 prompt_new.md 的完整新版 Prompt Pack。用于先测试新版整体效果，再决定是否继续拆分 A1-A6 做消融实验；自然语言推理和反馈使用中文，JSON key、函数、变量、表达式和指标 ID 保持英文。

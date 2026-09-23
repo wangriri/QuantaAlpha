@@ -11,11 +11,13 @@ import csv
 import glob
 import json
 import os
+import re
 import signal
+import shutil
 import subprocess
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -43,12 +45,246 @@ DOTENV_PATH = PROJECT_ROOT / ".env"
 EXPERIMENT_CONFIG_PATH = PROJECT_ROOT / "configs" / "experiment.yaml"
 BACKTEST_CONFIG_PATH = PROJECT_ROOT / "configs" / "backtest.yaml"
 EVALUATION_CONFIG_PATH = PROJECT_ROOT / "configs" / "evaluation.yaml"
+TACTICAL_CONFIG_PATH = PROJECT_ROOT / "configs" / "tactical_analysis.yaml"
 DEDUP_REPORT_DIR = PROJECT_ROOT / "data" / "results" / "dedup_reports"
 TRACE_ROOT = PROJECT_ROOT / "data" / "run_traces"
+PROMPT_PACKS_DIR = PROJECT_ROOT / "quantaalpha" / "prompting" / "packs"
 PROMPT_PACK_DEFAULTS = {
     "zh_quant_v1": {"output_language": "zh-CN", "strict_json": True},
     "en_default": {"output_language": "en", "strict_json": False},
 }
+PROMPT_PACK_LABELS = {
+    "zh_quant_v1": "中文优化版",
+    "en_default": "英文原版",
+}
+PROMPT_FLOW_NODES = [
+    {
+        "id": "planning",
+        "title": "Planning",
+        "stage": "planning",
+        "stageLabel": "Planning",
+        "short": "把用户初始方向扩成多个并行研究方向。",
+        "long": "上游方向规划层。LLM 在这里不写公式、不写代码，只把用户输入拆成后续可进入 hypothesis 阶段的研究方向。",
+        "x": 24,
+        "y": 60,
+        "keys": ["planning.system", "planning.user", "planning.output_format"],
+    },
+    {
+        "id": "first_round",
+        "title": "First-Round Direction Transform",
+        "stage": "hypothesis",
+        "stageLabel": "Hypothesis",
+        "short": "首轮无历史时，把用户方向改写成 hypothesis 上下文。",
+        "long": "只有 trace.hist 为空、但当前 branch 有 potential_direction 时使用。它不是最终 hypothesis，而是首轮 hypothesis user context 的来源。",
+        "x": 350,
+        "y": 50,
+        "keys": ["potential_direction_transformation"],
+    },
+    {
+        "id": "history",
+        "title": "History Memory",
+        "stage": "hypothesis",
+        "stageLabel": "Hypothesis",
+        "short": "把多轮研究轨迹整理成文本记忆。",
+        "long": "把历史 hypothesis、experiment、feedback 渲染成研究记忆，供后续 hypothesis 和 factor expression 阶段复用。",
+        "x": 350,
+        "y": 230,
+        "keys": ["hypothesis_and_feedback"],
+    },
+    {
+        "id": "hypothesis",
+        "title": "Hypothesis Generation",
+        "stage": "hypothesis",
+        "stageLabel": "Hypothesis",
+        "short": "把方向变成清晰、可检验的研究假设。",
+        "long": "把首轮方向或历史研究记忆与输出 schema、质量约束结合起来，生成新的 hypothesis JSON。",
+        "x": 700,
+        "y": 145,
+        "keys": [
+            "hypothesis_gen.system_prompt",
+            "hypothesis_gen.user_prompt",
+            "hypothesis_output_format",
+            "factor_hypothesis_specification",
+        ],
+    },
+    {
+        "id": "factor_expr",
+        "title": "Factor Expression Generation",
+        "stage": "factor",
+        "stageLabel": "Factor / DSL",
+        "short": "把 hypothesis 转成可执行因子表达式。",
+        "long": "把目标 hypothesis、历史记忆、DSL 白名单与因子 JSON schema 组合，要求 LLM 输出 description / variables / formulation / expression。",
+        "x": 980,
+        "y": 140,
+        "keys": [
+            "hypothesis2experiment.system_prompt",
+            "hypothesis2experiment.user_prompt",
+            "function_lib_description",
+            "factor_experiment_output_format",
+        ],
+    },
+    {
+        "id": "expr_retry",
+        "title": "Expression Quality Retry",
+        "stage": "factor",
+        "stageLabel": "Factor / DSL",
+        "short": "表达式重复或复杂度过高时，回灌反馈重生成。",
+        "long": "FactorRegulator 会检查表达式是否可解析、重复、过长或过度参数化。若不过关，用 expression_duplication 拼回 user prompt 驱动下一轮生成。",
+        "x": 980,
+        "y": 480,
+        "keys": ["expression_duplication", "hypothesis2experiment.user_prompt"],
+    },
+    {
+        "id": "coder",
+        "title": "Code Implementation",
+        "stage": "eval",
+        "stageLabel": "Coder / Eval",
+        "short": "根据因子定义和历史错误生成 factor.py。",
+        "long": "把 FactorTask 落成可执行实现。它会读取历史失败尝试、相似成功案例和 error summary。",
+        "x": 720,
+        "y": 620,
+        "keys": [
+            "coder.evolving_strategy_factor_implementation_v1_system",
+            "coder.evolving_strategy_factor_implementation_v2_user",
+            "coder.evolving_strategy_error_summary_v2_system",
+            "coder.evolving_strategy_error_summary_v2_user",
+        ],
+    },
+    {
+        "id": "qa_eval",
+        "title": "QA / Evaluator",
+        "stage": "eval",
+        "stageLabel": "Coder / Eval",
+        "short": "检查表达式/代码、输出格式与最终正确性。",
+        "long": "包括 QA critic 和 evaluator：前者针对表达式或代码错误给批评，后者对输出格式和最终正确性做结构化判定。",
+        "x": 1280,
+        "y": 660,
+        "keys": [
+            "qa.evaluator_code_feedback_v1_system",
+            "qa.evaluator_code_feedback_v1_user",
+            "qa.evolving_strategy_factor_implementation_v1_system",
+            "qa.evolving_strategy_factor_implementation_v2_user",
+            "evaluator_output_format_system",
+            "evaluator_final_decision_v1_system",
+            "evaluator_final_decision_v1_user",
+        ],
+    },
+    {
+        "id": "feedback",
+        "title": "Backtest Feedback",
+        "stage": "eval",
+        "stageLabel": "Coder / Eval",
+        "short": "比较 current result 与 SOTA，生成下一轮 feedback。",
+        "long": "回测完成后，把 hypothesis、因子细节、综合结果和复杂度反馈喂给 LLM，生成结构化 feedback。",
+        "x": 720,
+        "y": 950,
+        "keys": ["factor_feedback_generation.system", "factor_feedback_generation.user"],
+    },
+    {
+        "id": "mutation",
+        "title": "Mutation Branch Brief",
+        "stage": "evolution",
+        "stageLabel": "Evolution",
+        "short": "基于单个父轨迹生成新方向。",
+        "long": "根据父 hypothesis、父因子、父指标和父 feedback 生成结构化新方向，再包装成下一轮 branch 的附加指令。",
+        "x": 300,
+        "y": 1210,
+        "keys": [
+            "mutation.system",
+            "mutation.user",
+            "mutation.simple_user",
+            "mutation.suffix_template",
+            "mutation.fallback_templates",
+        ],
+    },
+    {
+        "id": "crossover",
+        "title": "Crossover Branch Brief",
+        "stage": "evolution",
+        "stageLabel": "Evolution",
+        "short": "融合多个父轨迹，并包装成 strategy_suffix。",
+        "long": "读取多个 parent summary，生成 hybrid direction，再包装成下一轮 branch 的附加指令。",
+        "x": 1280,
+        "y": 1260,
+        "keys": [
+            "crossover.system",
+            "crossover.user",
+            "crossover.simple_user",
+            "crossover.parent_template",
+            "crossover.suffix_template",
+            "crossover.phase_names",
+        ],
+    },
+]
+PROMPT_FLOW_EDGES = [
+    {"from": "planning", "to": "first_round", "label": "首轮输入", "colorClass": "blue"},
+    {"from": "planning", "to": "history", "label": "后续分支", "colorClass": "blue"},
+    {"from": "first_round", "to": "hypothesis", "colorClass": "green"},
+    {"from": "history", "to": "hypothesis", "colorClass": "blue"},
+    {"from": "hypothesis", "to": "factor_expr", "colorClass": "green"},
+    {"from": "factor_expr", "to": "expr_retry", "label": "不过关重试", "colorClass": "orange"},
+    {"from": "expr_retry", "to": "factor_expr", "label": "回灌", "colorClass": "orange", "dashed": True},
+    {"from": "factor_expr", "to": "coder", "colorClass": "slate"},
+    {"from": "coder", "to": "qa_eval", "colorClass": "slate"},
+    {"from": "qa_eval", "to": "feedback", "colorClass": "slate"},
+    {"from": "feedback", "to": "history", "label": "trace.hist", "colorClass": "purple"},
+    {"from": "feedback", "to": "mutation", "label": "evolution", "colorClass": "orange"},
+    {"from": "feedback", "to": "crossover", "label": "evolution", "colorClass": "orange"},
+    {"from": "mutation", "to": "hypothesis", "label": "strategy_suffix", "colorClass": "orange", "dashed": True},
+    {"from": "crossover", "to": "hypothesis", "label": "strategy_suffix", "colorClass": "purple", "dashed": True},
+]
+PROMPT_FLOW_KEY_SPECS = {
+    "planning.system": ("planning", "system", "quantaalpha/pipeline/planning.py", "并行方向规划阶段", "定义 planning 模块角色边界。"),
+    "planning.user": ("planning", "user", "quantaalpha/pipeline/planning.py", "并行方向规划阶段", "注入用户输入方向和目标方向数。"),
+    "planning.output_format": ("planning", "output_format", "quantaalpha/pipeline/planning.py", "并行方向规划阶段", "约束输出为 directions JSON。"),
+    "potential_direction_transformation": ("factor", "potential_direction_transformation", "quantaalpha/factors/proposal.py", "首轮 hypothesis 前", "把用户方向改写成首轮 hypothesis 上下文。"),
+    "hypothesis_and_feedback": ("factor", "hypothesis_and_feedback", "quantaalpha/factors/proposal.py", "历史记忆", "把历史 trace 渲染成研究记忆。"),
+    "hypothesis_output_format": ("factor", "hypothesis_output_format", "quantaalpha/factors/proposal.py", "hypothesis 生成", "规定 hypothesis JSON 输出结构。"),
+    "factor_hypothesis_specification": ("factor", "factor_hypothesis_specification", "quantaalpha/factors/proposal.py", "hypothesis 生成", "约束 hypothesis 质量。"),
+    "hypothesis_gen.system_prompt": ("factor", "hypothesis_gen.system_prompt", "quantaalpha/factors/proposal.py", "hypothesis 生成", "组装 hypothesis 阶段 system prompt。"),
+    "hypothesis_gen.user_prompt": ("factor", "hypothesis_gen.user_prompt", "quantaalpha/factors/proposal.py", "hypothesis 生成", "组装 hypothesis 阶段 user prompt。"),
+    "hypothesis2experiment.system_prompt": ("factor", "hypothesis2experiment.system_prompt", "quantaalpha/factors/proposal.py", "表达式生成", "组装表达式生成 system prompt。"),
+    "hypothesis2experiment.user_prompt": ("factor", "hypothesis2experiment.user_prompt", "quantaalpha/factors/proposal.py", "表达式生成", "组装表达式生成 user prompt。"),
+    "function_lib_description": ("factor", "function_lib_description", "quantaalpha/factors/proposal.py", "表达式生成", "DSL 函数、变量与语法白名单。"),
+    "factor_experiment_output_format": ("factor", "factor_experiment_output_format", "quantaalpha/factors/proposal.py", "表达式生成", "规定因子 JSON 输出结构。"),
+    "expression_duplication": ("factor", "expression_duplication", "quantaalpha/factors/regulator", "表达式重试", "表达式重复/质量问题反馈模板。"),
+    "factor_feedback_generation.system": ("feedback", "factor_feedback_generation.system", "quantaalpha/factors/feedback.py", "回测反馈", "生成 feedback 的 system prompt。"),
+    "factor_feedback_generation.user": ("feedback", "factor_feedback_generation.user", "quantaalpha/factors/feedback.py", "回测反馈", "生成 feedback 的 user prompt。"),
+    "mutation.system": ("evolution", "mutation.system", "quantaalpha/pipeline/evolution/mutation.py", "mutation", "定义 mutation 目标。"),
+    "mutation.user": ("evolution", "mutation.user", "quantaalpha/pipeline/evolution/mutation.py", "mutation", "注入父轨迹生成新方向。"),
+    "mutation.simple_user": ("evolution", "mutation.simple_user", "quantaalpha/pipeline/evolution/mutation.py", "mutation", "简化 mutation prompt。"),
+    "mutation.suffix_template": ("evolution", "mutation.suffix_template", "quantaalpha/pipeline/evolution/mutation.py", "mutation", "包装下一轮 strategy_suffix。"),
+    "mutation.fallback_templates": ("evolution", "mutation.fallback_templates", "quantaalpha/pipeline/evolution/mutation.py", "mutation", "mutation 失败时的 fallback。"),
+    "crossover.system": ("evolution", "crossover.system", "quantaalpha/pipeline/evolution/crossover.py", "crossover", "定义 crossover 目标。"),
+    "crossover.user": ("evolution", "crossover.user", "quantaalpha/pipeline/evolution/crossover.py", "crossover", "注入多个父轨迹。"),
+    "crossover.simple_user": ("evolution", "crossover.simple_user", "quantaalpha/pipeline/evolution/crossover.py", "crossover", "简化 crossover prompt。"),
+    "crossover.parent_template": ("evolution", "crossover.parent_template", "quantaalpha/pipeline/evolution/crossover.py", "crossover", "单个 parent summary 模板。"),
+    "crossover.suffix_template": ("evolution", "crossover.suffix_template", "quantaalpha/pipeline/evolution/crossover.py", "crossover", "包装下一轮 strategy_suffix。"),
+    "crossover.phase_names": ("evolution", "crossover.phase_names", "quantaalpha/pipeline/evolution/crossover.py", "crossover", "阶段名映射。"),
+    "coder.evolving_strategy_factor_implementation_v1_system": ("coder", "evolving_strategy_factor_implementation_v1_system", "quantaalpha/factors/coder/evolving_strategy.py", "代码实现", "实现因子代码的 system prompt。"),
+    "coder.evolving_strategy_factor_implementation_v2_user": ("coder", "evolving_strategy_factor_implementation_v2_user", "quantaalpha/factors/coder/evolving_strategy.py", "代码实现", "实现因子代码的 user prompt。"),
+    "coder.evolving_strategy_error_summary_v2_system": ("coder", "evolving_strategy_error_summary_v2_system", "quantaalpha/factors/coder/evolving_strategy.py", "错误总结", "总结代码错误的 system prompt。"),
+    "coder.evolving_strategy_error_summary_v2_user": ("coder", "evolving_strategy_error_summary_v2_user", "quantaalpha/factors/coder/evolving_strategy.py", "错误总结", "总结代码错误的 user prompt。"),
+    "qa.evaluator_code_feedback_v1_system": ("qa", "evaluator_code_feedback_v1_system", "quantaalpha/factors/coder/eva_utils.py", "QA critic", "评价代码/表达式问题的 system prompt。"),
+    "qa.evaluator_code_feedback_v1_user": ("qa", "evaluator_code_feedback_v1_user", "quantaalpha/factors/coder/eva_utils.py", "QA critic", "评价代码/表达式问题的 user prompt。"),
+    "qa.evolving_strategy_factor_implementation_v1_system": ("qa", "evolving_strategy_factor_implementation_v1_system", "quantaalpha/factors/coder/evolving_strategy.py", "表达式修复", "修复表达式的 system prompt。"),
+    "qa.evolving_strategy_factor_implementation_v2_user": ("qa", "evolving_strategy_factor_implementation_v2_user", "quantaalpha/factors/coder/evolving_strategy.py", "表达式修复", "修复表达式的 user prompt。"),
+    "evaluator_output_format_system": ("coder", "evaluator_output_format_system", "quantaalpha/factors/coder/eva_utils.py", "最终评价", "评价器输出格式。"),
+    "evaluator_final_decision_v1_system": ("coder", "evaluator_final_decision_v1_system", "quantaalpha/factors/coder/eva_utils.py", "最终评价", "最终判定 system prompt。"),
+    "evaluator_final_decision_v1_user": ("coder", "evaluator_final_decision_v1_user", "quantaalpha/factors/coder/eva_utils.py", "最终评价", "最终判定 user prompt。"),
+}
+LLM_MODULE_ROUTE_DEFINITIONS = [
+    {
+        "tag": "AlphaAgentHypothesis2FactorExpression",
+        "label": "因子表达式生成",
+        "description": "把研究假设转成 description / formulation / expression 的因子定义。",
+    },
+    {
+        "tag": "FactorCodeEvaluator",
+        "label": "因子代码评价器",
+        "description": "在 factor_calculate 阶段检查表达式/代码实现是否与因子定义一致。",
+    },
+]
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -80,7 +316,7 @@ class MiningStartRequest(BaseModel):
     qualityGateEnabled: Optional[bool] = Field(None, description="Enable quality gate checks")
     parallelEnabled: Optional[bool] = Field(None, description="Enable parallel execution within evolution phases")
     backtestTimeout: Optional[int] = Field(None, description="Backtest timeout in seconds")
-    promptPack: Optional[str] = Field(None, description="Prompt pack: zh_quant_v1 | en_default")
+    promptPack: Optional[str] = Field(None, description="Prompt pack name under quantaalpha/prompting/packs")
 
 
 class BacktestStartRequest(BaseModel):
@@ -108,6 +344,24 @@ class DedupArchiveRequest(BaseModel):
     factorIds: List[str]
 
 
+class TacticalAnalyzeRequest(BaseModel):
+    library: str = Field(..., description="Factor library JSON filename")
+
+
+class TacticalConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    min_training_months: Optional[int] = Field(None, ge=1, le=120)
+    min_validation_months: Optional[int] = Field(None, ge=1, le=120)
+    min_trading_days_per_month: Optional[int] = Field(None, ge=1, le=31)
+    strong_best_month_quantile: Optional[float] = Field(None, ge=0.0, le=1.0)
+    burst_month_quantile: Optional[float] = Field(None, ge=0.0, le=1.0)
+    high_volatility_quantile: Optional[float] = Field(None, ge=0.0, le=1.0)
+    severe_loss_quantile: Optional[float] = Field(None, ge=0.0, le=1.0)
+    severe_drawdown_quantile: Optional[float] = Field(None, ge=0.0, le=1.0)
+    min_positive_month_ratio: Optional[float] = Field(None, ge=0.0, le=1.0)
+    min_burst_month_count: Optional[int] = Field(None, ge=0, le=120)
+
+
 class EvaluationConfigUpdate(BaseModel):
     trainingStart: Optional[str] = None
     trainingEnd: Optional[str] = None
@@ -131,7 +385,11 @@ class SystemConfigUpdate(BaseModel):
     OPENAI_BASE_URL: Optional[str] = None
     CHAT_MODEL: Optional[str] = None
     REASONING_MODEL: Optional[str] = None
+    QA_CHAT_MODEL_MAP: Optional[str] = None
+    QA_CHAT_BASE_URL_MAP: Optional[str] = None
+    QA_CHAT_API_KEY_MAP: Optional[str] = None
     DEFAULT_LIBRARY_SUFFIX: Optional[str] = None
+    llmModuleRoutes: Optional[List[Dict[str, Any]]] = None
 
     defaultNumDirections: Optional[int] = None
     defaultMaxRounds: Optional[int] = None
@@ -181,6 +439,91 @@ def _load_dotenv_dict() -> Dict[str, str]:
     return env
 
 
+def _strip_env_quotes(value: str) -> str:
+    normalized = (value or "").strip()
+    while len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in {"'", '"'}:
+        normalized = normalized[1:-1].strip()
+    return normalized
+
+
+def _parse_env_json_map(value: Optional[str]) -> Dict[str, str]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(_strip_env_quotes(value))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(k): str(v) for k, v in parsed.items() if v not in (None, "")}
+
+
+def _dump_env_json_map(value: Dict[str, str]) -> str:
+    return "'" + json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "'"
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    return value[:8] + "..." + value[-4:] if len(value) > 12 else "***"
+
+
+def _is_masked_secret(value: str) -> bool:
+    return "..." in value or value == "***"
+
+
+def _get_llm_module_routes(dotenv: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:
+    dotenv = dotenv or _load_dotenv_dict()
+    model_map = _parse_env_json_map(dotenv.get("QA_CHAT_MODEL_MAP") or dotenv.get("CHAT_MODEL_MAP"))
+    base_url_map = _parse_env_json_map(dotenv.get("QA_CHAT_BASE_URL_MAP") or dotenv.get("CHAT_BASE_URL_MAP"))
+    api_key_map = _parse_env_json_map(dotenv.get("QA_CHAT_API_KEY_MAP") or dotenv.get("CHAT_API_KEY_MAP"))
+    routes: List[Dict[str, str]] = []
+    for definition in LLM_MODULE_ROUTE_DEFINITIONS:
+        tag = definition["tag"]
+        routes.append({
+            **definition,
+            "modelName": model_map.get(tag, ""),
+            "apiUrl": base_url_map.get(tag, ""),
+            "apiKey": _mask_secret(api_key_map.get(tag, "")),
+            "hasApiKey": bool(api_key_map.get(tag)),
+        })
+    return routes
+
+
+def _merge_llm_module_routes(dotenv: Dict[str, str], routes: List[Dict[str, Any]]) -> Dict[str, str]:
+    allowed_tags = {item["tag"] for item in LLM_MODULE_ROUTE_DEFINITIONS}
+    model_map = _parse_env_json_map(dotenv.get("QA_CHAT_MODEL_MAP") or dotenv.get("CHAT_MODEL_MAP"))
+    base_url_map = _parse_env_json_map(dotenv.get("QA_CHAT_BASE_URL_MAP") or dotenv.get("CHAT_BASE_URL_MAP"))
+    api_key_map = _parse_env_json_map(dotenv.get("QA_CHAT_API_KEY_MAP") or dotenv.get("CHAT_API_KEY_MAP"))
+
+    for route in routes:
+        tag = str(route.get("tag") or "")
+        if tag not in allowed_tags:
+            continue
+        model_name = str(route.get("modelName") or "").strip()
+        api_url = str(route.get("apiUrl") or "").strip().rstrip("/")
+        api_key = str(route.get("apiKey") or "").strip()
+
+        if model_name:
+            model_map[tag] = model_name
+        else:
+            model_map.pop(tag, None)
+        if api_url:
+            base_url_map[tag] = api_url
+        else:
+            base_url_map.pop(tag, None)
+        if api_key and not _is_masked_secret(api_key):
+            api_key_map[tag] = api_key
+        elif api_key == "":
+            api_key_map.pop(tag, None)
+
+    return {
+        "QA_CHAT_MODEL_MAP": _dump_env_json_map(model_map),
+        "QA_CHAT_BASE_URL_MAP": _dump_env_json_map(base_url_map),
+        "QA_CHAT_API_KEY_MAP": _dump_env_json_map(api_key_map),
+    }
+
+
 def _load_yaml_dict(path: Path) -> Dict[str, Any]:
     """Load a YAML file as a mutable dict."""
     if not path.exists():
@@ -217,6 +560,166 @@ def _write_yaml_dict(path: Path, data: Dict[str, Any]) -> None:
 
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _list_prompt_packs() -> List[Dict[str, Any]]:
+    packs: List[Dict[str, Any]] = []
+    if PROMPT_PACKS_DIR.exists():
+        for path in sorted(PROMPT_PACKS_DIR.glob("*.yaml")):
+            raw = _load_yaml_dict(path)
+            name = str(raw.get("name") or path.stem)
+            packs.append({
+                "name": name,
+                "label": str(raw.get("label") or raw.get("display_name") or PROMPT_PACK_LABELS.get(name) or name),
+                "version": str(raw.get("version") or ""),
+                "outputLanguage": str(raw.get("output_language") or ""),
+                "strictJson": bool(raw.get("strict_json", False)),
+                "description": str(raw.get("description") or ""),
+                "planningPromptFile": str(raw.get("planning_prompt_file") or ""),
+                "factorPromptFile": str(raw.get("factor_prompt_file") or ""),
+                "evolutionPromptFile": str(raw.get("evolution_prompt_file") or ""),
+                "factorFeedbackPromptFile": str(raw.get("factor_feedback_prompt_file") or ""),
+                "coderPromptFile": str(raw.get("coder_prompt_file") or ""),
+                "qaPromptFile": str(raw.get("qa_prompt_file") or ""),
+            })
+    if not packs:
+        packs = [
+            {
+                "name": name,
+                "label": name,
+                "version": "",
+                "outputLanguage": defaults.get("output_language", ""),
+                "strictJson": bool(defaults.get("strict_json", False)),
+                "description": "",
+                "planningPromptFile": "",
+                "factorPromptFile": "",
+                "evolutionPromptFile": "",
+                "factorFeedbackPromptFile": "",
+                "coderPromptFile": "",
+                "qaPromptFile": "",
+            }
+            for name, defaults in PROMPT_PACK_DEFAULTS.items()
+        ]
+    return packs
+
+
+def _prompt_pack_names() -> set[str]:
+    return {pack["name"] for pack in _list_prompt_packs()}
+
+
+def _prompt_pack_defaults(prompt_pack: str) -> Dict[str, Any]:
+    pack_path = PROMPT_PACKS_DIR / f"{prompt_pack}.yaml"
+    if pack_path.exists():
+        raw = _load_yaml_dict(pack_path)
+        return {
+            "output_language": raw.get("output_language", ""),
+            "strict_json": bool(raw.get("strict_json", False)),
+        }
+    return PROMPT_PACK_DEFAULTS.get(prompt_pack, {})
+
+
+def _get_nested_value(data: Dict[str, Any], dotted_path: str) -> Any:
+    current: Any = data
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _prompt_path_from_pack(pack: Dict[str, Any], field: str, base_dir: Path, fallback: str) -> Path:
+    filename = str(pack.get(field) or fallback)
+    path = Path(filename)
+    return path if path.is_absolute() else base_dir / path
+
+
+def _display_project_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(PROJECT_ROOT))
+    except Exception:
+        return str(path)
+
+
+def _build_prompt_flow_pack(pack: Dict[str, Any], active_pack: str) -> Dict[str, Any]:
+    planning_path = _prompt_path_from_pack(
+        pack,
+        "planningPromptFile",
+        PROJECT_ROOT / "quantaalpha" / "pipeline" / "prompts",
+        "planning_prompts.yaml",
+    )
+    factor_path = _prompt_path_from_pack(
+        pack,
+        "factorPromptFile",
+        PROJECT_ROOT / "quantaalpha" / "factors" / "prompts",
+        "prompts.yaml",
+    )
+    factor_feedback_path = _prompt_path_from_pack(
+        pack,
+        "factorFeedbackPromptFile",
+        PROJECT_ROOT / "quantaalpha" / "factors" / "prompts",
+        str(pack.get("factorPromptFile") or "prompts.yaml"),
+    )
+    evolution_path = _prompt_path_from_pack(
+        pack,
+        "evolutionPromptFile",
+        PROJECT_ROOT / "quantaalpha" / "pipeline" / "prompts",
+        "evolution_prompts.yaml",
+    )
+    coder_path = _prompt_path_from_pack(
+        pack,
+        "coderPromptFile",
+        PROJECT_ROOT / "quantaalpha" / "factors" / "coder",
+        "prompts.yaml",
+    )
+    qa_path = _prompt_path_from_pack(
+        pack,
+        "qaPromptFile",
+        PROJECT_ROOT / "quantaalpha" / "factors" / "coder",
+        "qa_prompts.yaml",
+    )
+
+    sources = {
+        "planning": {"path": planning_path, "data": _load_yaml_dict(planning_path), "shared": False},
+        "factor": {"path": factor_path, "data": _load_yaml_dict(factor_path), "shared": False},
+        "feedback": {
+            "path": factor_feedback_path,
+            "data": _load_yaml_dict(factor_feedback_path),
+            "shared": not bool(pack.get("factorFeedbackPromptFile") or pack.get("factorPromptFile")),
+        },
+        "evolution": {"path": evolution_path, "data": _load_yaml_dict(evolution_path), "shared": not bool(pack.get("evolutionPromptFile"))},
+        "coder": {"path": coder_path, "data": _load_yaml_dict(coder_path), "shared": not bool(pack.get("coderPromptFile"))},
+        "qa": {"path": qa_path, "data": _load_yaml_dict(qa_path), "shared": not bool(pack.get("qaPromptFile"))},
+    }
+
+    keys: Dict[str, Any] = {}
+    for key, (source_name, lookup_path, reader, stage, role) in PROMPT_FLOW_KEY_SPECS.items():
+        source = sources[source_name]
+        value = _get_nested_value(source["data"], lookup_path)
+        keys[key] = {
+            "key": key,
+            "file": _display_project_path(source["path"]),
+            "reader": reader,
+            "stage": stage,
+            "role": role,
+            "value": "" if value is None else (json.dumps(value, ensure_ascii=False, indent=2) if not isinstance(value, str) else value),
+            "shared": bool(source["shared"]),
+            "missing": value is None,
+            "sourceType": "shared" if source["shared"] else "pack",
+        }
+
+    return {
+        **pack,
+        "active": pack.get("name") == active_pack,
+        "files": {
+            "planning": _display_project_path(planning_path),
+            "factor": _display_project_path(factor_path),
+            "feedback": _display_project_path(factor_feedback_path),
+            "evolution": _display_project_path(evolution_path),
+            "coder": _display_project_path(coder_path),
+            "qa": _display_project_path(qa_path),
+        },
+        "keys": keys,
+    }
 
 
 def _get_experiment_defaults(dotenv: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -297,11 +800,11 @@ def _apply_experiment_default_updates(updates: Dict[str, Any]) -> None:
         exp_changed = True
     if "promptPack" in updates:
         prompt_pack = str(updates["promptPack"] or "zh_quant_v1")
-        if prompt_pack not in PROMPT_PACK_DEFAULTS:
+        if prompt_pack not in _prompt_pack_names():
             raise HTTPException(status_code=400, detail=f"Unsupported prompt pack: {prompt_pack}")
         prompt_cfg = exp_cfg.setdefault("prompting", {})
         prompt_cfg["pack"] = prompt_pack
-        prompt_cfg.update(PROMPT_PACK_DEFAULTS[prompt_pack])
+        prompt_cfg.update(_prompt_pack_defaults(prompt_pack))
         exp_changed = True
     if "defaultMarket" in updates:
         backtest_cfg.setdefault("data", {})["market"] = updates["defaultMarket"]
@@ -444,6 +947,8 @@ def _artifact_preview(run_dir: Path, rel_path: str) -> Dict[str, Any]:
     lifecycle = data.get("lifecycle") if isinstance(data.get("lifecycle"), dict) else {}
 
     preview: Dict[str, Any] = {}
+    if "research_topic" in data:
+        preview["用户输入"] = data.get("research_topic")
     actor = data.get("actor")
     if actor:
         preview["actor"] = actor
@@ -685,6 +1190,194 @@ def _resolve_factor_library(value: str) -> Path:
     raise HTTPException(status_code=404, detail=f"Factor library not found: {raw.name}")
 
 
+def _path_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_symlink():
+        return path.lstat().st_size
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_symlink():
+            total += item.lstat().st_size
+        elif item.is_file():
+            total += item.stat().st_size
+    return total
+
+
+def _format_bytes(size: int) -> str:
+    value = float(size)
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{size} B"
+
+
+def _safe_cleanup_roots() -> List[Path]:
+    return [
+        (PROJECT_ROOT / "data" / "factorlib").resolve(),
+        (PROJECT_ROOT / "data" / "results").resolve(),
+        (PROJECT_ROOT / "data" / "run_traces").resolve(),
+        (PROJECT_ROOT / "log").resolve(),
+    ]
+
+
+def _safe_cleanup_path(path: Path) -> Optional[Path]:
+    expanded = path.expanduser()
+    if expanded.is_symlink():
+        resolved = expanded.parent.resolve() / expanded.name
+        exists = True
+    else:
+        resolved = expanded.resolve()
+        exists = resolved.exists()
+    for root in _safe_cleanup_roots():
+        if resolved == root:
+            return None
+        if root in resolved.parents and exists:
+            return resolved
+    return None
+
+
+def _library_experiment_suffix(library_path: Path) -> Optional[str]:
+    match = re.search(r"all_factors_library_(.+)\.json$", library_path.name)
+    return match.group(1) if match else None
+
+
+def _timestamp_from_suffix(suffix: Optional[str]) -> Optional[datetime]:
+    if not suffix:
+        return None
+    match = re.search(r"(\d{8})_(\d{6})", suffix)
+    if not match:
+        return None
+    try:
+        return datetime.strptime("_".join(match.groups()), "%Y%m%d_%H%M%S")
+    except ValueError:
+        return None
+
+
+def _collect_artifact_paths(raw_library: Dict[str, Any]) -> List[Path]:
+    paths: List[Path] = []
+    evaluation_root = (PROJECT_ROOT / "data" / "results" / "factor_evaluations").resolve()
+    for factor in (raw_library.get("factors") or {}).values():
+        if not isinstance(factor, dict):
+            continue
+        evaluation = factor.get("evaluation_v2") or {}
+        artifacts = evaluation.get("artifacts") or {}
+        if not isinstance(artifacts, dict):
+            continue
+        for value in artifacts.values():
+            if isinstance(value, str) and value:
+                artifact_path = Path(value)
+                paths.append(artifact_path)
+                try:
+                    resolved = artifact_path.expanduser().resolve()
+                except Exception:
+                    continue
+                if evaluation_root in resolved.parents:
+                    paths.append(artifact_path.parent / "daily_pv.h5")
+    return paths
+
+
+def _dedupe_cleanup_items(paths: List[tuple[Path, str]]) -> List[Dict[str, Any]]:
+    resolved: Dict[str, tuple[Path, str]] = {}
+    for path, category in paths:
+        safe = _safe_cleanup_path(path)
+        if safe is not None:
+            resolved[str(safe)] = (safe, category)
+
+    # If a parent directory is already selected, individual children do not add value.
+    selected: List[tuple[Path, str]] = []
+    for path, category in sorted(resolved.values(), key=lambda item: (len(item[0].parts), str(item[0]))):
+        if any(parent == path or parent in path.parents for parent, _ in selected):
+            continue
+        selected.append((path, category))
+
+    items = []
+    for path, category in selected:
+        items.append({
+            "path": str(path),
+            "name": path.name,
+            "kind": "dir" if path.is_dir() else "file",
+            "category": category,
+            "sizeBytes": _path_size(path),
+            "sizeText": _format_bytes(_path_size(path)),
+        })
+    return items
+
+
+def _prune_empty_cleanup_dirs(paths: List[Path]) -> List[str]:
+    """Remove empty parent directories left after deleting individual artifacts."""
+    roots = _safe_cleanup_roots()
+    pruned: List[str] = []
+    for original in paths:
+        current = original.parent if original.is_file() or not original.exists() else original
+        while current.exists() and current.is_dir():
+            if not any(root in current.parents for root in roots):
+                break
+            try:
+                current.rmdir()
+            except OSError:
+                break
+            pruned.append(str(current))
+            current = current.parent
+    return pruned
+
+
+def _build_library_cleanup_plan(library: str) -> Dict[str, Any]:
+    library_path = _resolve_factor_library(library)
+    try:
+        raw_library = _load_factor_library(str(library_path))
+    except Exception:
+        raw_library = {}
+    suffix = _library_experiment_suffix(library_path)
+    timestamp = _timestamp_from_suffix(suffix)
+    candidates: List[tuple[Path, str]] = [(library_path, "factor_library")]
+
+    if suffix:
+        for name in [
+            f"workspace_{suffix}",
+            f"pickle_cache_{suffix}",
+        ]:
+            candidates.append((PROJECT_ROOT / "data" / "results" / name, "process_output"))
+
+    for artifact_path in _collect_artifact_paths(raw_library):
+        candidates.append((artifact_path, "evaluation_artifact"))
+
+    if timestamp is not None:
+        for run_dir in (PROJECT_ROOT / "data" / "run_traces").glob("run_*"):
+            run_ts = _timestamp_from_suffix(run_dir.name)
+            if run_ts is not None and abs((run_ts - timestamp).total_seconds()) <= 180:
+                candidates.append((run_dir, "run_trace"))
+
+        # Project logs are UTC-like in current runs, while library suffixes are local time.
+        expected_log_time = timestamp - timedelta(hours=8)
+        for log_dir in (PROJECT_ROOT / "log").glob("20??-??-??_*"):
+            match = re.match(r"(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})", log_dir.name)
+            if not match:
+                continue
+            try:
+                log_ts = datetime.strptime(
+                    f"{match.group(1)} {match.group(2)}:{match.group(3)}:{match.group(4)}",
+                    "%Y-%m-%d %H:%M:%S",
+                )
+            except ValueError:
+                continue
+            if abs((log_ts - expected_log_time).total_seconds()) <= 300:
+                candidates.append((log_dir, "log"))
+
+    items = _dedupe_cleanup_items(candidates)
+    total = sum(item["sizeBytes"] for item in items)
+    return {
+        "library": library_path.name,
+        "suffix": suffix,
+        "items": items,
+        "totalSizeBytes": total,
+        "totalSizeText": _format_bytes(total),
+    }
+
+
 def _resolve_evaluation_config(value: Optional[str]) -> Path:
     if not value:
         return EVALUATION_CONFIG_PATH
@@ -829,11 +1522,11 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             if req.backtestTimeout is not None:
                 run_cfg.setdefault("backtest", {})["timeout"] = req.backtestTimeout
             if req.promptPack:
-                if req.promptPack not in PROMPT_PACK_DEFAULTS:
+                if req.promptPack not in _prompt_pack_names():
                     raise ValueError(f"Unsupported prompt pack: {req.promptPack}")
                 prompt_cfg = run_cfg.setdefault("prompting", {})
                 prompt_cfg["pack"] = req.promptPack
-                prompt_cfg.update(PROMPT_PACK_DEFAULTS[req.promptPack])
+                prompt_cfg.update(_prompt_pack_defaults(req.promptPack))
 
             # Write to a temporary file so the original is untouched
             tmp_dir = Path(env.get("WORKSPACE_PATH", "/tmp"))
@@ -848,7 +1541,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
             traceback.print_exc()
 
         # Build CLI args
-        if selected_prompt_pack in PROMPT_PACK_DEFAULTS:
+        if selected_prompt_pack in _prompt_pack_names():
             env["QUANTAALPHA_PROMPT_PACK"] = selected_prompt_pack
 
         cmd = [
@@ -1470,6 +2163,53 @@ async def list_factor_libraries():
     return ApiResponse(success=True, data={"libraries": libs})
 
 
+@app.get("/api/v1/factors/libraries/{library}/cleanup-preview", response_model=ApiResponse)
+async def preview_factor_library_cleanup(library: str):
+    """Preview files that would be removed for one factor library."""
+    plan = _build_library_cleanup_plan(library)
+    return ApiResponse(success=True, data=plan)
+
+
+@app.delete("/api/v1/factors/libraries/{library}", response_model=ApiResponse)
+async def delete_factor_library(library: str, confirm: bool = Query(False)):
+    """Delete one factor library and its related process artifacts."""
+    if not confirm:
+        raise HTTPException(status_code=400, detail="Deletion requires confirm=true")
+    plan = _build_library_cleanup_plan(library)
+    deleted: List[Dict[str, Any]] = []
+    failed: List[Dict[str, str]] = []
+    deleted_paths: List[Path] = []
+    for item in plan["items"]:
+        path = _safe_cleanup_path(Path(item["path"]))
+        if path is None:
+            continue
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            deleted.append(item)
+            deleted_paths.append(path)
+        except Exception as exc:
+            failed.append({"path": item["path"], "error": str(exc)})
+
+    pruned_empty_dirs = _prune_empty_cleanup_dirs(deleted_paths)
+    remaining_libs = [Path(p).name for p in _find_factor_jsons()]
+    return ApiResponse(
+        success=not failed,
+        data={
+            "library": plan["library"],
+            "deleted": deleted,
+            "failed": failed,
+            "prunedEmptyDirs": pruned_empty_dirs,
+            "deletedSizeBytes": sum(item["sizeBytes"] for item in deleted),
+            "deletedSizeText": _format_bytes(sum(item["sizeBytes"] for item in deleted)),
+            "libraries": remaining_libs,
+        },
+        message="删除完成" if not failed else "部分文件删除失败",
+    )
+
+
 @app.get("/api/v1/factors/{factor_id}", response_model=ApiResponse)
 async def get_factor_detail(
     factor_id: str,
@@ -1973,9 +2713,127 @@ def _evaluation_config_for_frontend() -> Dict[str, Any]:
     }
 
 
+def _tactical_config_for_frontend() -> Dict[str, Any]:
+    from quantaalpha.evaluation.tactical import DEFAULT_TACTICAL_CONFIG
+
+    raw = _load_yaml_dict(TACTICAL_CONFIG_PATH)
+    config = dict(DEFAULT_TACTICAL_CONFIG)
+    for key in DEFAULT_TACTICAL_CONFIG:
+        if key in raw:
+            config[key] = raw[key]
+    return config
+
+
+def _default_tactical_config_for_frontend() -> Dict[str, Any]:
+    from quantaalpha.evaluation.tactical import DEFAULT_TACTICAL_CONFIG
+
+    return dict(DEFAULT_TACTICAL_CONFIG)
+
+
+def _resolve_tactical_artifact(path: str) -> Path:
+    artifact = Path(path).expanduser()
+    if not artifact.is_absolute():
+        artifact = PROJECT_ROOT / artifact
+    artifact = artifact.resolve()
+    output_root = (PROJECT_ROOT / "data" / "results" / "factor_evaluations").resolve()
+    if output_root not in artifact.parents or not artifact.exists() or artifact.suffix.lower() != ".csv":
+        raise HTTPException(status_code=404, detail="Tactical artifact not found")
+    return artifact
+
+
+def _read_tactical_excess_artifact(path: str):
+    import pandas as pd
+
+    artifact = _resolve_tactical_artifact(path)
+    frame = pd.read_csv(artifact)
+    if "excess_return" not in frame.columns:
+        raise ValueError("CSV 缺少 excess_return 列")
+    if "date" not in frame.columns and len(frame.columns):
+        first = str(frame.columns[0])
+        if first.lower().startswith("unnamed") or first == "":
+            frame = frame.rename(columns={frame.columns[0]: "date"})
+    if "date" in frame.columns:
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["excess_return"] = pd.to_numeric(frame["excess_return"], errors="coerce")
+    return frame
+
+
+def _build_tactical_records(library_path: Path) -> List[Dict[str, Any]]:
+    raw = _load_factor_library(str(library_path))
+    factors = raw.get("factors", {})
+    records: List[Dict[str, Any]] = []
+    for factor_id, factor_info in factors.items():
+        if not isinstance(factor_info, dict):
+            continue
+        evaluation = factor_info.get("evaluation_v2") or {}
+        artifacts = evaluation.get("artifacts") or {}
+        record: Dict[str, Any] = {
+            "factorId": factor_info.get("factor_id", factor_id),
+            "factorName": factor_info.get("factor_name", factor_id),
+            "factorExpression": factor_info.get("factor_expression", ""),
+            "factorDescription": factor_info.get("factor_description", ""),
+            "evaluationStatus": evaluation.get("status", "not_evaluated"),
+        }
+        training_path = artifacts.get("training_excess_returns")
+        if not evaluation or evaluation.get("status") in {"not_evaluated", "running"}:
+            record["skipReason"] = "因子尚未完成 evaluation_v2 评估"
+            records.append(record)
+            continue
+        if not training_path:
+            record["skipReason"] = "缺少训练期超额收益产物"
+            records.append(record)
+            continue
+        try:
+            record["training_excess"] = _read_tactical_excess_artifact(str(training_path))
+        except Exception as exc:
+            record["skipReason"] = f"训练期产物不可读：{exc}"
+            records.append(record)
+            continue
+        validation_path = artifacts.get("validation_excess_returns")
+        if validation_path:
+            try:
+                record["validation_excess"] = _read_tactical_excess_artifact(str(validation_path))
+            except Exception:
+                record["validation_excess"] = None
+        records.append(record)
+    return records
+
+
 @app.get("/api/v1/evaluation/config", response_model=ApiResponse)
 async def get_evaluation_config():
     return ApiResponse(success=True, data={"config": _evaluation_config_for_frontend()})
+
+
+@app.get("/api/v1/tactical/config", response_model=ApiResponse)
+async def get_tactical_config():
+    return ApiResponse(
+        success=True,
+        data={
+            "config": _tactical_config_for_frontend(),
+            "defaults": _default_tactical_config_for_frontend(),
+        },
+    )
+
+
+@app.put("/api/v1/tactical/config", response_model=ApiResponse)
+async def update_tactical_config(update: TacticalConfigUpdate):
+    values = {key: value for key, value in update.model_dump().items() if value is not None}
+    config = _tactical_config_for_frontend()
+    config.update(values)
+    _write_yaml_dict(TACTICAL_CONFIG_PATH, config)
+    return ApiResponse(success=True, data={"config": _tactical_config_for_frontend()}, message="战术因子配置已保存")
+
+
+@app.post("/api/v1/tactical/analyze", response_model=ApiResponse)
+async def analyze_tactical_factors(req: TacticalAnalyzeRequest):
+    from quantaalpha.evaluation.tactical import TacticalFactorAnalyzer
+
+    library_path = _resolve_factor_library(req.library)
+    config = _tactical_config_for_frontend()
+    records = _build_tactical_records(library_path)
+    result = TacticalFactorAnalyzer(config).analyze_factors(records)
+    result["library"] = library_path.name
+    return ApiResponse(success=True, data=result)
 
 
 @app.get("/api/v1/evaluation/artifact", response_model=ApiResponse)
@@ -2088,6 +2946,68 @@ async def archive_duplicate_factors(report_id: str, req: DedupArchiveRequest):
 
 # ---- System config endpoints ----
 
+
+class ModelListRequest(BaseModel):
+    baseUrl: str = ""
+    apiKey: Optional[str] = None
+
+
+def _fetch_provider_models(base_url: str, api_key: str) -> List[str]:
+    from urllib.request import Request, build_opener, HTTPRedirectHandler
+    from urllib.error import HTTPError, URLError
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise HTTPException(400, "请输入有效的 API 服务地址")
+
+    # Do not forward the Authorization header to a redirected destination.
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    request = Request(base_url.rstrip("/") + "/models", headers={
+        "Authorization": f"Bearer {api_key}", "Accept": "application/json",
+    })
+    try:
+        with build_opener(NoRedirect()).open(request, timeout=15) as response:
+            payload = json.load(response)
+    except HTTPError as exc:
+        message = {
+            401: "API Key 无效或已过期", 403: "当前 API Key 无权获取模型列表",
+            404: "服务未提供模型列表，请检查 API 地址（部分服务需要 /v1）",
+            429: "服务请求过于频繁，请稍后刷新",
+        }.get(exc.code, f"模型服务返回 HTTP {exc.code}，请检查 API 地址或稍后重试")
+        raise HTTPException(502, message) from None
+    except (URLError, TimeoutError, OSError):
+        raise HTTPException(502, "无法连接模型服务或请求超时，请稍后刷新") from None
+    except (ValueError, UnicodeError):
+        raise HTTPException(502, "模型服务返回了无效的 JSON") from None
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise HTTPException(502, "模型服务返回格式不符合模型列表协议")
+    models = sorted({item["id"].strip() for item in payload["data"]
+                     if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"].strip()})
+    if not models:
+        raise HTTPException(502, "服务未返回可用模型，可手动输入模型 ID")
+    return models
+
+
+@app.post("/api/v1/system/models", response_model=ApiResponse)
+async def list_provider_models(req: ModelListRequest):
+    dotenv = _load_dotenv_dict()
+    saved_url = (dotenv.get("OPENAI_BASE_URL") or os.getenv("OPENAI_BASE_URL", "")).strip().rstrip("/")
+    base_url = req.baseUrl.strip().rstrip("/") or saved_url
+    api_key = (req.apiKey or "").strip()
+    if not api_key:
+        # An edited endpoint must not receive the credential for the saved endpoint.
+        if base_url != saved_url:
+            raise HTTPException(400, "API 地址已更改，请输入该服务的 API Key 后刷新")
+        api_key = dotenv.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(400, "请先填写 API Key")
+    models = await asyncio.to_thread(_fetch_provider_models, base_url, api_key)
+    return ApiResponse(success=True, data={"models": models, "fetchedAt": datetime.now().astimezone().isoformat()})
+
 @app.get("/api/v1/system/config", response_model=ApiResponse)
 async def get_system_config():
     """Read current system configuration from .env and experiment.yaml."""
@@ -2111,8 +3031,31 @@ async def get_system_config():
         data={
             "env": masked_env,
             "experimentConfig": _get_experiment_defaults(dotenv),
+            "promptPacks": _list_prompt_packs(),
+            "llmModuleRoutes": _get_llm_module_routes(dotenv),
             "experimentYaml": exp_yaml_content,
             "factorLibraries": [Path(p).name for p in _find_factor_jsons()],
+        },
+    )
+
+
+@app.get("/api/v1/prompts/flow", response_model=ApiResponse)
+async def get_prompt_flow():
+    """Return prompt-flow template data and the resolved prompt content for every prompt pack."""
+    defaults = _get_experiment_defaults()
+    active_pack = str(defaults.get("promptPack") or "zh_quant_v1")
+    packs = [_build_prompt_flow_pack(pack, active_pack) for pack in _list_prompt_packs()]
+    return ApiResponse(
+        success=True,
+        data={
+            "nodes": PROMPT_FLOW_NODES,
+            "edges": PROMPT_FLOW_EDGES,
+            "packs": packs,
+            "activePack": active_pack,
+            "notes": [
+                "planning / hypothesis / factor expression 等 pack 文件会随版本切换。",
+                "evolution / coder / QA evaluator 当前仍是共享 prompt 文件，因此在页面中标为共享。",
+            ],
         },
     )
 
@@ -2124,6 +3067,7 @@ async def update_system_config(update: SystemConfigUpdate):
         DOTENV_PATH.write_text("", encoding="utf-8")
 
     updates = {k: v for k, v in update.model_dump().items() if v is not None}
+    module_routes = updates.pop("llmModuleRoutes", None)
     env_keys = {
         "QLIB_DATA_DIR",
         "DATA_RESULTS_DIR",
@@ -2131,8 +3075,13 @@ async def update_system_config(update: SystemConfigUpdate):
         "OPENAI_BASE_URL",
         "CHAT_MODEL",
         "REASONING_MODEL",
+        "QA_CHAT_MODEL_MAP",
+        "QA_CHAT_BASE_URL_MAP",
+        "QA_CHAT_API_KEY_MAP",
         "DEFAULT_LIBRARY_SUFFIX",
     }
+    if module_routes is not None:
+        updates.update(_merge_llm_module_routes(_load_dotenv_dict(), module_routes))
     env_updates = {k: v for k, v in updates.items() if k in env_keys}
     yaml_updates = {k: v for k, v in updates.items() if k not in env_keys}
 

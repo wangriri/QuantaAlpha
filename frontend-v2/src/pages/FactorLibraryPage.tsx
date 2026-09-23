@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Check, Code, Database, Download, ExternalLink, RefreshCw, Search, ShieldCheck, X } from 'lucide-react';
+import { AlertCircle, Check, Code, Database, Download, ExternalLink, Loader2, RefreshCw, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { getEvaluationArtifact, getFactorDetail, getFactors } from '@/services/api';
+import { deleteFactorLibrary, getEvaluationArtifact, getFactorDetail, getFactors, previewLibraryCleanup } from '@/services/api';
+import type { LibraryCleanupPlan } from '@/services/api';
 import type { Factor } from '@/types';
 
 type StatusFilter = 'all' | 'not_evaluated' | 'passed' | 'failed' | 'duplicate_suspected' | 'archived';
@@ -17,7 +18,7 @@ const Metric: React.FC<{ label: string; value: unknown; passed?: boolean }> = ({
   <div className="border-l-2 border-border py-1 pl-3"><div className="flex items-center gap-1 text-xs text-muted-foreground">{passed === true ? <Check className="h-3 w-3 text-emerald-500" /> : passed === false ? <X className="h-3 w-3 text-red-500" /> : null}{label}</div><div className="mt-1 font-mono text-base font-semibold">{metricValue(value)}</div></div>
 );
 
-const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'groups' | 'excess' | 'decay' }> = ({ title, path, kind }) => {
+const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'groups' | 'long_short' | 'excess' | 'decay' }> = ({ title, path, kind }) => {
   const [rows, setRows] = useState<Record<string, any>[]>([]);
   useEffect(() => {
     if (!path) { setRows([]); return; }
@@ -25,12 +26,9 @@ const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'grou
   }, [path]);
   if (!path) return null;
   const xKey = kind === 'decay' ? 'lag' : 'date';
-  const keys = kind === 'groups' ? ['G0', 'G9', 'long_short_half'] : kind === 'excess' ? ['head_net_return', 'benchmark_net_return', 'excess_return'] : kind === 'decay' ? ['ic', 'rank_ic'] : ['ic', 'rank_ic'];
+  const keys = kind === 'groups' ? ['G0', 'G9'] : kind === 'long_short' ? ['long_group', 'short_group', 'ls'] : kind === 'excess' ? ['head_net_return', 'benchmark_net_return', 'excess_return'] : kind === 'decay' ? ['ic', 'rank_ic'] : ['ic', 'rank_ic'];
   const colors = ['#22c55e', '#ef4444', '#3b82f6'];
-  const chartRows = kind === 'groups' ? rows.map((row) => ({
-    ...row,
-    long_short_half: (Number(row.G9) - Number(row.G0)) / 2,
-  })) : kind === 'excess' ? rows.reduce<Record<string, any>[]>((out, row) => {
+  const chartRows = kind === 'groups' || kind === 'long_short' ? rows : kind === 'excess' ? rows.reduce<Record<string, any>[]>((out, row) => {
     const previous = out[out.length - 1] || {};
     out.push({
       ...row,
@@ -50,6 +48,9 @@ export const FactorLibraryPage: React.FC = () => {
   const [selected, setSelected] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [cleanupPlan, setCleanupPlan] = useState<LibraryCleanupPlan | null>(null);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [cleanupDeleting, setCleanupDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -78,6 +79,39 @@ export const FactorLibraryPage: React.FC = () => {
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `factors_${new Date().toISOString().slice(0, 10)}.json`; anchor.click(); URL.revokeObjectURL(url);
   };
 
+  const openCleanup = async () => {
+    if (!library) return;
+    setCleanupLoading(true); setError('');
+    try {
+      const response = await previewLibraryCleanup(library);
+      setCleanupPlan(response.data || null);
+    } catch {
+      setError('无法生成删除预览，请检查后端服务。');
+    } finally {
+      setCleanupLoading(false);
+    }
+  };
+
+  const confirmCleanup = async () => {
+    if (!cleanupPlan?.library) return;
+    setCleanupDeleting(true); setError('');
+    try {
+      const response = await deleteFactorLibrary(cleanupPlan.library);
+      const nextLibraries = response.data?.libraries || libraries.filter((item) => item !== cleanupPlan.library);
+      setLibraries(nextLibraries);
+      const nextLibrary = nextLibraries[0] || '';
+      setLibrary(nextLibrary);
+      if (nextLibrary) localStorage.setItem('quantaalpha_active_library', nextLibrary);
+      else localStorage.removeItem('quantaalpha_active_library');
+      setSelected(null);
+      setCleanupPlan(null);
+    } catch {
+      setError('删除失败，请检查后端日志或文件权限。');
+    } finally {
+      setCleanupDeleting(false);
+    }
+  };
+
   const evaluation = selected?.evaluation_v2 || {};
   const training = evaluation.training || selected?.trainingMetrics || {};
   const validation = evaluation.validation || selected?.validationMetrics || {};
@@ -87,7 +121,7 @@ export const FactorLibraryPage: React.FC = () => {
   const missingPortfolio = !training.portfolio;
 
   return <div className="space-y-5 animate-fade-in-up">
-    <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><h1 className="flex items-center gap-3 text-3xl font-bold"><Database className="h-8 w-8 text-primary" />因子库</h1><p className="mt-1 text-sm text-muted-foreground">evaluation_v2 指标、生命周期和审计产物</p></div><div className="flex gap-2"><select value={library} onChange={(event) => { setLibrary(event.target.value); localStorage.setItem('quantaalpha_active_library', event.target.value); }} className="max-w-64 rounded-md border border-input bg-background px-3 py-2 text-sm">{libraries.map((item) => <option key={item}>{item}</option>)}</select><Button variant="outline" onClick={load} title="刷新"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button><Button variant="outline" onClick={exportLibrary} title="导出"><Download className="h-4 w-4" /></Button></div></div>
+    <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between"><div><h1 className="flex items-center gap-3 text-3xl font-bold"><Database className="h-8 w-8 text-primary" />因子库</h1><p className="mt-1 text-sm text-muted-foreground">evaluation_v2 指标、生命周期和审计产物</p></div><div className="flex flex-wrap gap-2"><select value={library} onChange={(event) => { setLibrary(event.target.value); localStorage.setItem('quantaalpha_active_library', event.target.value); }} className="max-w-64 rounded-md border border-input bg-background px-3 py-2 text-sm">{libraries.map((item) => <option key={item}>{item}</option>)}</select><Button variant="outline" onClick={load} title="刷新"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button><Button variant="outline" onClick={exportLibrary} title="导出"><Download className="h-4 w-4" /></Button><Button variant="outline" onClick={openCleanup} disabled={!library || cleanupLoading} title="删除当前因子库及过程文件">{cleanupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 text-red-500" />}</Button></div></div>
     {error && <div className="flex items-center gap-2 border border-red-500/30 px-4 py-3 text-sm text-red-500"><AlertCircle className="h-4 w-4" />{error}</div>}
 
     <div className="grid grid-cols-2 gap-3 md:grid-cols-5">{([['全部', factors.length], ['未评估', counts.not_evaluated || 0], ['通过', counts.passed || 0], ['未通过', (counts.failed || 0) + (counts.lookahead_rejected || 0) + (counts.data_error || 0)], ['已归档', counts.archived || 0]] as const).map(([label, value]) => <div key={label} className="border-y border-border px-2 py-3"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 text-2xl font-semibold">{value}</div></div>)}</div>
@@ -102,8 +136,9 @@ export const FactorLibraryPage: React.FC = () => {
         <section><h3 className="mb-3 text-sm font-medium">组合调仓</h3><div className="grid grid-cols-3 gap-4"><Metric label="调仓周期（日）" value={portfolio.rebalance_period_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /><Metric label="调仓日数" value={portfolio.rebalance_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /><Metric label="收益日数" value={portfolio.return_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /></div></section>
         <section className="grid gap-4 md:grid-cols-2"><div><h3 className="mb-3 text-sm font-medium">训练 / 验证</h3><div className="overflow-hidden border-y border-border text-sm"><div className="grid grid-cols-3 px-2 py-2 text-xs text-muted-foreground"><span>区间</span><span>IC</span><span>超额 Sharpe</span></div><div className="grid grid-cols-3 border-t border-border px-2 py-2"><span>训练</span><span>{number(training.ic, 4)}</span><span>{number(training.excess_sharpe)}</span></div><div className="grid grid-cols-3 border-t border-border px-2 py-2"><span>2025H2</span><span>{number(validation.ic, 4)}</span><span>{number(validation.excess_sharpe)}</span></div>{Object.entries(evaluation.subperiods || selected.subperiods || {}).map(([name, metrics]: [string, any]) => <div key={name} className="grid grid-cols-3 border-t border-border px-2 py-2"><span>{name}</span><span>{number(metrics.ic, 4)}</span><span>{number(metrics.excess_sharpe)}</span></div>)}</div></div><div><h3 className="mb-3 text-sm font-medium">时间与防未来审计</h3><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">因子早于开仓</span><span>{evaluation.alignment?.factor_before_entry ? '通过' : '未通过'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">开仓早于退出</span><span>{evaluation.alignment?.entry_before_exit ? '通过' : '未通过'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">静态检查</span><span>{evaluation.lookahead_audit?.static?.status || '--'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">截断重算</span><span>{evaluation.lookahead_audit?.truncation?.status || '--'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">有效日 / 预期日</span><span>{training.coverage?.valid_days ?? '--'} / {training.coverage?.expected_days ?? '--'}</span></div></div></div></section>
         <section><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><Code className="h-4 w-4" />因子表达式</h3><code className="block break-all border-y border-border py-3 text-xs">{selected.factorExpression || selected.factor_expression}</code></section>
-        <ArtifactChart title="十分组累计收益（G0 低值，G9 高值，蓝线为 (G9-G0)/2）" path={artifacts.training_group_cumulative} kind="groups" /><ArtifactChart title="训练期每日 IC" path={artifacts.training_daily_ic} kind="ic" /><ArtifactChart title="IC 衰减与半衰期" path={artifacts.ic_decay} kind="decay" /><ArtifactChart title="头组、等权基线与超额累计收益" path={artifacts.training_excess_returns} kind="excess" />
+        <ArtifactChart title="十分组累计收益（G0 低值，G9 高值）" path={artifacts.training_group_cumulative} kind="groups" /><ArtifactChart title="多头、空头与净多空累计收益（ls=(long+short)/2，含费）" path={artifacts.training_long_short_cumulative} kind="long_short" /><ArtifactChart title="训练期每日 IC" path={artifacts.training_daily_ic} kind="ic" /><ArtifactChart title="IC 衰减与半衰期" path={artifacts.ic_decay} kind="decay" /><ArtifactChart title="头组、等权基线与超额累计收益" path={artifacts.training_excess_returns} kind="excess" />
         <section><h3 className="mb-2 text-sm font-medium">产物文件</h3><div className="grid gap-2 md:grid-cols-2">{Object.entries(artifacts).map(([name, path]) => <div key={name} className="flex min-w-0 items-center gap-2 border-b border-border py-2 text-xs"><ExternalLink className="h-3.5 w-3.5 shrink-0" /><span className="shrink-0 text-muted-foreground">{name}</span><span className="truncate font-mono" title={String(path)}>{String(path)}</span></div>)}</div></section>
       </div></div></div>}
+    {cleanupPlan && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !cleanupDeleting && setCleanupPlan(null)}><div className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-md border border-border bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="flex items-start justify-between border-b border-border px-5 py-4"><div><h2 className="flex items-center gap-2 text-lg font-semibold"><Trash2 className="h-5 w-5 text-red-500" />删除因子库及过程文件</h2><p className="mt-1 text-sm text-muted-foreground">{cleanupPlan.library}</p></div><Button variant="ghost" disabled={cleanupDeleting} onClick={() => setCleanupPlan(null)} title="关闭"><X className="h-4 w-4" /></Button></div><div className="space-y-4 p-5"><div className="border-y border-border py-3"><div className="text-xs text-muted-foreground">预计释放空间</div><div className="mt-1 text-2xl font-semibold">{cleanupPlan.totalSizeText}</div><div className="mt-1 text-xs text-muted-foreground">包含因子库、workspace、pickle cache、run trace、log 和库内评估产物路径。</div></div><div className="max-h-80 overflow-y-auto border-y border-border"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-background text-muted-foreground"><tr><th className="px-2 py-2 font-medium">类别</th><th className="px-2 py-2 font-medium">类型</th><th className="px-2 py-2 font-medium">大小</th><th className="px-2 py-2 font-medium">路径</th></tr></thead><tbody className="divide-y divide-border">{cleanupPlan.items.map((item) => <tr key={item.path}><td className="px-2 py-2"><Badge variant="outline">{item.category}</Badge></td><td className="px-2 py-2 font-mono">{item.kind}</td><td className="px-2 py-2 font-mono">{item.sizeText}</td><td className="max-w-md truncate px-2 py-2 font-mono" title={item.path}>{item.path}</td></tr>)}</tbody></table></div><div className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">删除后不会进入回收站。建议只删除已确认不再需要复盘的实验库。</div><div className="flex justify-end gap-2"><Button variant="outline" disabled={cleanupDeleting} onClick={() => setCleanupPlan(null)}>取消</Button><Button variant="primary" disabled={cleanupDeleting} onClick={confirmCleanup}>{cleanupDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}确认删除</Button></div></div></div></div>}
   </div>;
 };

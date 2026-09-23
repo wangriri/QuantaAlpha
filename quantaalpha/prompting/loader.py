@@ -76,3 +76,47 @@ def resolve_factor_prompts_path(default_path: str | Path, pack_name: str | None 
     if path.is_absolute():
         return path
     return PROJECT_ROOT / "quantaalpha" / "factors" / "prompts" / path
+
+
+def resolve_evolution_prompt_path(default_path: str | Path, pack_name: str | None = None) -> Path:
+    pack = _load_pack(pack_name)
+    prompt_file = pack.get("evolution_prompt_file")
+    if not prompt_file:
+        return Path(default_path)
+    path = Path(prompt_file)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / "quantaalpha" / "pipeline" / "prompts" / path
+
+
+def resolve_factor_feedback_prompts_path(default_path: str | Path, pack_name: str | None = None) -> Path:
+    pack = _load_pack(pack_name)
+    prompt_file = pack.get("factor_feedback_prompt_file") or pack.get("factor_prompt_file")
+    if not prompt_file:
+        return Path(default_path)
+    path = Path(prompt_file)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / "quantaalpha" / "factors" / "prompts" / path
+
+
+def resolve_factor_coder_prompts_path(default_path: str | Path, pack_name: str | None = None) -> Path:
+    pack = _load_pack(pack_name)
+    prompt_file = pack.get("coder_prompt_file")
+    if not prompt_file:
+        return Path(default_path)
+    path = Path(prompt_file)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / "quantaalpha" / "factors" / "coder" / path
+
+
+def resolve_factor_qa_prompts_path(default_path: str | Path, pack_name: str | None = None) -> Path:
+    pack = _load_pack(pack_name)
+    prompt_file = pack.get("qa_prompt_file")
+    if not prompt_file:
+        return Path(default_path)
+    path = Path(prompt_file)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / "quantaalpha" / "factors" / "coder" / path

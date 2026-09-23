@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Square, Compass, Bot } from 'lucide-react';
+import { Send, Sparkles, Square, Compass, Bot, ChevronDown, Check } from 'lucide-react';
 import { TaskConfig, type PromptPack } from '@/types';
+import { getSystemConfig, type PromptPackOption } from '@/services/api';
 
 interface ChatInputProps {
   onSubmit: (config: TaskConfig) => void;
@@ -11,12 +12,34 @@ interface ChatInputProps {
 export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunning = false }) => {
   const [input, setInput] = useState('');
   const [useCustomMiningDirection, setUseCustomMiningDirection] = useState(false);
+  const [promptPacks, setPromptPacks] = useState<PromptPackOption[]>([
+    {
+      name: 'zh_quant_v1',
+      label: '中文优化版',
+      version: '2026-08-20',
+      outputLanguage: 'zh-CN',
+      strictJson: true,
+      description: '',
+      planningPromptFile: '',
+      factorPromptFile: '',
+    },
+    {
+      name: 'en_default',
+      label: '英文原版',
+      version: 'pre-zh-prompt-optimization',
+      outputLanguage: 'en',
+      strictJson: false,
+      description: '',
+      planningPromptFile: '',
+      factorPromptFile: '',
+    },
+  ]);
   const [promptPack, setPromptPack] = useState<PromptPack>(() => {
     const saved = localStorage.getItem('quantaalpha_config');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed.promptPack === 'en_default' || parsed.promptPack === 'zh_quant_v1') {
+        if (typeof parsed.promptPack === 'string' && parsed.promptPack.trim()) {
           return parsed.promptPack;
         }
       } catch {}
@@ -26,7 +49,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
   const [config] = useState<Partial<TaskConfig>>({
     librarySuffix: '',
   });
+  const [isPromptMenuOpen, setIsPromptMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const promptMenuRef = useRef<HTMLDivElement>(null);
 
   const persistPromptPack = (nextPromptPack: PromptPack) => {
     try {
@@ -62,13 +87,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
     } as TaskConfig);
   };
 
-  const togglePromptPack = () => {
+  const updatePromptPack = (nextPromptPack: PromptPack) => {
     if (isRunning) return;
-    setPromptPack((current) => {
-      const next = current === 'zh_quant_v1' ? 'en_default' : 'zh_quant_v1';
-      persistPromptPack(next);
-      return next;
-    });
+    setPromptPack(nextPromptPack);
+    setIsPromptMenuOpen(false);
+    persistPromptPack(nextPromptPack);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -84,6 +107,41 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
     }
   }, [input]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSystemConfig()
+      .then((resp) => {
+        if (cancelled) return;
+        const packs = resp.data?.promptPacks || [];
+        if (packs.length) {
+          setPromptPacks(packs);
+          if (!packs.some((pack) => pack.name === promptPack)) {
+            const fallback = resp.data?.experimentConfig?.promptPack || packs[0].name;
+            setPromptPack(fallback);
+            persistPromptPack(fallback);
+          }
+        }
+      })
+      .catch(() => {
+        // Keep local fallback options when backend config is temporarily unavailable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!promptMenuRef.current?.contains(event.target as Node)) {
+        setIsPromptMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, []);
+
+  const currentPromptPack = promptPacks.find((pack) => pack.name === promptPack);
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 pb-6">
@@ -131,30 +189,81 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
                 >
                   自选挖掘方向
                 </span>
-                <button
-                  type="button"
-                  onClick={togglePromptPack}
-                  disabled={isRunning}
-                  title={
-                    promptPack === 'zh_quant_v1'
-                      ? '当前使用中文优化版提示词（点击切换英文原版）'
-                      : '当前使用英文原版提示词（点击切换中文优化版）'
-                  }
-                  className={`ml-3 p-2 rounded-lg transition-all ${
-                    promptPack === 'zh_quant_v1'
-                      ? 'bg-primary/15 text-primary ring-1 ring-primary/30'
-                      : 'bg-amber-500/15 text-amber-600 ring-1 ring-amber-500/30'
-                  } ${isRunning ? 'opacity-60 cursor-not-allowed' : 'hover:scale-105'}`}
-                >
-                  <Bot className="h-4 w-4" />
-                </button>
-                <span
-                  className={`text-xs ml-1 font-medium ${
-                    promptPack === 'zh_quant_v1' ? 'text-primary' : 'text-amber-600'
-                  }`}
-                >
-                  {promptPack === 'zh_quant_v1' ? '中文优化版' : '英文原版'}
-                </span>
+                <div className="relative ml-3" ref={promptMenuRef}>
+                  <button
+                    type="button"
+                    disabled={isRunning}
+                    onClick={() => setIsPromptMenuOpen((open) => !open)}
+                    title={currentPromptPack?.description || '选择本次挖掘使用的 prompt 版本'}
+                    className={`group flex h-8 items-center gap-2 rounded-lg border px-2.5 text-xs font-medium transition-all ${
+                      isRunning
+                        ? 'border-border bg-secondary/30 text-muted-foreground opacity-60 cursor-not-allowed'
+                        : 'border-primary/25 bg-primary/10 text-primary shadow-sm hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary/15 hover:shadow-md'
+                    }`}
+                  >
+                    <span className="flex h-5 w-5 items-center justify-center rounded-md bg-background/80 shadow-sm">
+                      <Bot className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="max-w-[120px] truncate">{currentPromptPack?.label || promptPack}</span>
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 transition-transform ${isPromptMenuOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+
+                  {isPromptMenuOpen && !isRunning && (
+                    <div className="absolute bottom-full left-0 z-50 mb-2 w-80 overflow-hidden rounded-xl border border-border/70 bg-background/95 p-1.5 shadow-2xl shadow-primary/10 backdrop-blur-xl">
+                      <div className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground">
+                        Prompt 版本
+                      </div>
+                      <div className="max-h-72 overflow-y-auto">
+                        {promptPacks.map((pack) => {
+                          const selected = pack.name === promptPack;
+                          return (
+                            <button
+                              key={pack.name}
+                              type="button"
+                              onClick={() => updatePromptPack(pack.name)}
+                              className={`flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-all ${
+                                selected
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'text-foreground hover:bg-secondary/60'
+                              }`}
+                            >
+                              <span
+                                className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border ${
+                                  selected
+                                    ? 'border-primary bg-primary text-primary-foreground'
+                                    : 'border-border bg-background'
+                                }`}
+                              >
+                                {selected && <Check className="h-3.5 w-3.5" />}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-2">
+                                  <span className="truncate text-sm font-semibold">{pack.label || pack.name}</span>
+                                  {pack.outputLanguage && (
+                                    <span className="rounded-md bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                      {pack.outputLanguage}
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">
+                                  {pack.name}
+                                  {pack.version ? ` · ${pack.version}` : ''}
+                                </span>
+                                {pack.description && (
+                                  <span className="mt-1 line-clamp-2 block text-[11px] leading-4 text-muted-foreground">
+                                    {pack.description}
+                                  </span>
+                                )}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex items-end gap-3">
                 <div className="flex-1">

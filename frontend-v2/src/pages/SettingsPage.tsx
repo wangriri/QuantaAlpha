@@ -3,8 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Settings, Save, RotateCcw, Eye, EyeOff, Check, X, AlertCircle, Loader2, Database, Sliders, Box, Cpu, Compass, Shuffle, Bot, BarChart3 } from 'lucide-react';
-import { getSystemConfig, updateSystemConfig, healthCheck, getEvaluationConfig, updateEvaluationConfig } from '@/services/api';
-import type { EvaluationConfig } from '@/services/api';
+import { getSystemConfig, getProviderModels, updateSystemConfig, healthCheck, getEvaluationConfig, updateEvaluationConfig } from '@/services/api';
+import type { EvaluationConfig, LlmModuleRoute, PromptPackOption } from '@/services/api';
 import { REFERENCE_MINING_DIRECTIONS, getDirectionLabel, type MiningDirectionItem } from '@/utils/miningDirections';
 import type { PromptPack } from '@/types';
 
@@ -28,15 +28,35 @@ interface SystemConfig {
   backtestTimeout: number;
   defaultLibrarySuffix: string;
   promptPack: PromptPack;
+  llmModuleRoutes: LlmModuleRoute[];
   // Mining direction: use selected directions / random
   miningDirectionMode: 'selected' | 'random';
   selectedMiningDirectionIndices: number[];
 }
 
+const DEFAULT_LLM_MODULE_ROUTES: LlmModuleRoute[] = [
+  {
+    tag: 'AlphaAgentHypothesis2FactorExpression',
+    label: '因子表达式生成',
+    description: '把研究假设转成因子描述、公式和 DSL 表达式。',
+    modelName: 'gpt-5.5',
+    apiUrl: 'https://www.yihean.net:3443/v1',
+    apiKey: '',
+  },
+  {
+    tag: 'FactorCodeEvaluator',
+    label: '因子代码评价器',
+    description: '检查因子表达式/代码实现是否和定义一致。',
+    modelName: 'gpt-5.5',
+    apiUrl: 'https://www.yihean.net:3443/v1',
+    apiKey: '',
+  },
+];
+
 const DEFAULT_CONFIG: SystemConfig = {
   apiKey: '',
   apiUrl: 'https://api.deepseek.com',
-  modelName: 'deepseek-chat',
+  modelName: '',
   qlibDataPath: '/Users/wangjiayi/Downloads/QuantaAlpha/data/qlib/cn_data',
   resultsDir: '/Users/wangjiayi/Downloads/QuantaAlpha/data/results',
   defaultNumDirections: 1,
@@ -49,6 +69,7 @@ const DEFAULT_CONFIG: SystemConfig = {
   backtestTimeout: 600,
   defaultLibrarySuffix: '',
   promptPack: 'zh_quant_v1',
+  llmModuleRoutes: DEFAULT_LLM_MODULE_ROUTES,
   miningDirectionMode: 'selected',
   selectedMiningDirectionIndices: [0],
 };
@@ -66,41 +87,6 @@ const DEFAULT_EVALUATION_CONFIG: EvaluationConfig = {
   groupCount: 10, rebalancePeriodDays: 3, feeThrough2023: 0.0007, feeFrom2024: 0.00035, oosStatus: 'sealed', engine: 'oto_single_factor_v1',
 };
 
-const MODEL_OPTIONS = [
-  {
-    label: 'DeepSeek',
-    options: [
-      { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
-      { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
-      { value: 'deepseek-chat', label: 'DeepSeek Chat / V3 兼容' },
-      { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner / R1 兼容' },
-    ],
-  },
-  {
-    label: 'Qwen',
-    options: [
-      { value: 'qwen-max', label: 'Qwen Max' },
-      { value: 'qwen-plus', label: 'Qwen Plus' },
-      { value: 'qwen-turbo', label: 'Qwen Turbo' },
-    ],
-  },
-  {
-    label: 'OpenAI',
-    options: [
-      { value: 'gpt-4o', label: 'GPT-4o' },
-      { value: 'gpt-4o-mini', label: 'GPT-4o mini' },
-      { value: 'gpt-4.1', label: 'GPT-4.1' },
-      { value: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
-      { value: 'gpt-4', label: 'GPT-4' },
-      { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
-    ],
-  },
-];
-
-const MODEL_OPTION_VALUES = new Set(
-  MODEL_OPTIONS.flatMap((group) => group.options.map((option) => option.value))
-);
 const CUSTOM_MODEL_VALUE = '__custom_model__';
 
 export const SettingsPage: React.FC = () => {
@@ -114,7 +100,42 @@ export const SettingsPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [factorLibraries, setFactorLibraries] = useState<string[]>([]);
+  const [promptPacks, setPromptPacks] = useState<PromptPackOption[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [modelsUpdatedAt, setModelsUpdatedAt] = useState<string | null>(null);
+  const [modelsRefresh, setModelsRefresh] = useState(0);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const controller = new AbortController();
+    setModels([]);
+    setModelsError(null);
+    setModelsUpdatedAt(null);
+    setModelsLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const key = config.apiKey.trim();
+        const response = await getProviderModels(
+          config.apiUrl,
+          key && !key.includes('...') && key !== '***' ? key : undefined,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        if (!response.success || !response.data) throw new Error(response.message || '获取模型列表失败');
+        setModels(response.data.models);
+        setModelsUpdatedAt(response.data.fetchedAt);
+      } catch (err: unknown) {
+        if (!controller.signal.aborted) setModelsError(err instanceof Error ? err.message : '获取模型列表失败');
+      } finally {
+        if (!controller.signal.aborted) setModelsLoading(false);
+      }
+    }, 600);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [isLoading, config.apiUrl, config.apiKey, modelsRefresh]);
 
   // Load config from backend on mount
   useEffect(() => {
@@ -165,9 +186,11 @@ export const SettingsPage: React.FC = () => {
           backtestTimeout: experimentConfig.backtestTimeout ?? DEFAULT_CONFIG.backtestTimeout,
           defaultLibrarySuffix: experimentConfig.defaultLibrarySuffix ?? DEFAULT_CONFIG.defaultLibrarySuffix,
           promptPack: experimentConfig.promptPack ?? DEFAULT_CONFIG.promptPack,
+          llmModuleRoutes: resp.data.llmModuleRoutes?.length ? resp.data.llmModuleRoutes : DEFAULT_CONFIG.llmModuleRoutes,
           miningDirectionMode,
           selectedMiningDirectionIndices,
         });
+        setPromptPacks(resp.data.promptPacks || []);
         setFactorLibraries(resp.data.factorLibraries || []);
       }
       const evaluationResponse = await getEvaluationConfig();
@@ -205,7 +228,7 @@ export const SettingsPage: React.FC = () => {
 
     // Try to save to backend
     try {
-      const update: Record<string, string | number | boolean> = {};
+      const update: Record<string, unknown> = {};
       if (config.apiKey && !config.apiKey.includes('...')) {
         update.OPENAI_API_KEY = config.apiKey;
       }
@@ -226,6 +249,7 @@ export const SettingsPage: React.FC = () => {
       update.qualityGateEnabled = config.qualityGateEnabled;
       update.backtestTimeout = config.backtestTimeout;
       update.promptPack = config.promptPack;
+      update.llmModuleRoutes = config.llmModuleRoutes;
 
       if (Object.keys(update).length > 0) {
         await updateSystemConfig(update);
@@ -253,12 +277,22 @@ export const SettingsPage: React.FC = () => {
     setIsDirty(true);
   };
 
+  const updateModuleRouteField = (tag: string, key: keyof LlmModuleRoute, value: string) => {
+    setConfig((prev) => ({
+      ...prev,
+      llmModuleRoutes: prev.llmModuleRoutes.map((route) => (
+        route.tag === tag ? { ...route, [key]: value } : route
+      )),
+    }));
+    setIsDirty(true);
+  };
+
   const updateEvaluationField = <K extends keyof EvaluationConfig>(key: K, value: EvaluationConfig[K]) => {
     setEvaluationConfig((previous) => ({ ...previous, [key]: value }));
     setIsDirty(true);
   };
 
-  const isCustomModel = !MODEL_OPTION_VALUES.has(config.modelName);
+  const isCustomModel = !models.includes(config.modelName);
 
   if (isLoading) {
     return (
@@ -406,14 +440,8 @@ export const SettingsPage: React.FC = () => {
                   }}
                   className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                 >
-                  {MODEL_OPTIONS.map((group) => (
-                    <optgroup key={group.label} label={group.label}>
-                      {group.options.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </optgroup>
+                  {models.map((model) => (
+                    <option key={model} value={model}>{model}</option>
                   ))}
                   <option value={CUSTOM_MODEL_VALUE}>自定义模型 ID</option>
                 </select>
@@ -422,48 +450,141 @@ export const SettingsPage: React.FC = () => {
                     type="text"
                     value={config.modelName}
                     onChange={(e) => updateConfigField('modelName', e.target.value.trim())}
-                    placeholder="输入模型 ID，例如 deepseek-v4-flash"
+                    placeholder="输入模型 ID，例如 deepseek-flash"
                     className="mt-3 w-full rounded-lg border border-input bg-background px-4 py-2 text-sm font-mono focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                   />
                 )}
-                <p className="text-xs text-muted-foreground mt-1">
-                  DeepSeek 官方模型可选 V4 Flash、V4 Pro，也保留 Chat / Reasoner 兼容名。
+                <div className="flex items-center gap-3 mt-3">
+                  <Button type="button" variant="outline" disabled={modelsLoading}
+                    onClick={() => setModelsRefresh((value) => value + 1)}>
+                    {modelsLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-2" />}
+                    {modelsLoading ? '获取模型中…' : '刷新模型列表'}
+                  </Button>
+                  {modelsUpdatedAt && <span className="text-xs text-muted-foreground">
+                    {models.length} 个模型 · {new Date(modelsUpdatedAt).toLocaleTimeString()} 更新
+                  </span>}
+                </div>
+                {modelsError && <p role="alert" className="text-xs text-destructive mt-2">{modelsError}</p>}
+                <p className="text-xs text-muted-foreground mt-2">
+                  从当前 API 服务实时获取。已配置的模型会保留，也可手动输入模型 ID。
+                  列表反映服务返回的模型，具体调用权限及对话能力以服务商为准。
                 </p>
+                <datalist id="llm-model-options">
+                  {models.map((model) => (
+                    <option key={model} value={model} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div className="border-t border-border/50 pt-5">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div>
+                    <h3 className="text-sm font-semibold">模块单独模型配置</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      仅影响指定 LLM 节点；留空时继承上方全局模型/API 配置。
+                    </p>
+                  </div>
+                  <Badge variant="outline">QA_CHAT_*_MAP</Badge>
+                </div>
+                <div className="space-y-4">
+                  {config.llmModuleRoutes.map((route) => (
+                    <div key={route.tag} className="rounded-lg border border-border/60 bg-background/60 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="font-medium">{route.label}</div>
+                          <div className="mt-1 text-xs font-mono text-muted-foreground">{route.tag}</div>
+                          <p className="mt-2 text-xs text-muted-foreground">{route.description}</p>
+                        </div>
+                        {route.modelName && <Badge variant="default">{route.modelName}</Badge>}
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium mb-2">模块模型</label>
+                          <input
+                            type="text"
+                            list="llm-model-options"
+                            value={route.modelName}
+                            onChange={(e) => updateModuleRouteField(route.tag, 'modelName', e.target.value.trim())}
+                            placeholder={config.modelName || '继承全局模型'}
+                            className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm font-mono focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium mb-2">模块 API Base URL</label>
+                          <input
+                            type="text"
+                            value={route.apiUrl}
+                            onChange={(e) => updateModuleRouteField(route.tag, 'apiUrl', e.target.value)}
+                            placeholder={config.apiUrl || '继承全局 API URL'}
+                            className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm font-mono focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium mb-2">模块 API Key</label>
+                          <input
+                            type={showApiKey ? 'text' : 'password'}
+                            value={route.apiKey}
+                            onChange={(e) => updateModuleRouteField(route.tag, 'apiKey', e.target.value)}
+                            placeholder={route.hasApiKey ? '已配置，留空则清除模块 Key' : '继承全局 API Key'}
+                            className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm font-mono focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary transition-all"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-3">提示词模式</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => updateConfigField('promptPack', 'zh_quant_v1')}
-                    className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all ${
-                      config.promptPack === 'zh_quant_v1'
-                        ? 'border-primary bg-primary/10 text-primary shadow-sm'
-                        : 'border-border/60 bg-background/60 text-muted-foreground hover:bg-secondary/30 hover:text-foreground'
-                    }`}
-                  >
-                    <Bot className="h-5 w-5 flex-shrink-0" />
-                    <div>
-                      <div className="font-medium">中文优化版</div>
-                      <div className="text-xs opacity-80">zh_quant_v1</div>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateConfigField('promptPack', 'en_default')}
-                    className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-all ${
-                      config.promptPack === 'en_default'
-                        ? 'border-primary bg-primary/10 text-primary shadow-sm'
-                        : 'border-border/60 bg-background/60 text-muted-foreground hover:bg-secondary/30 hover:text-foreground'
-                    }`}
-                  >
-                    <Bot className="h-5 w-5 flex-shrink-0" />
-                    <div>
-                      <div className="font-medium">英文原版</div>
-                      <div className="text-xs opacity-80">en_default</div>
-                    </div>
-                  </button>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {(promptPacks.length ? promptPacks : [
+                    { name: 'zh_quant_v1', label: '中文优化版', version: '2026-08-20', outputLanguage: 'zh-CN', strictJson: true, description: '', planningPromptFile: '', factorPromptFile: '' },
+                    { name: 'en_default', label: '英文原版', version: 'pre-zh-prompt-optimization', outputLanguage: 'en', strictJson: false, description: '', planningPromptFile: '', factorPromptFile: '' },
+                  ]).map((pack) => {
+                    const selected = config.promptPack === pack.name;
+                    return (
+                      <button
+                        key={pack.name}
+                        type="button"
+                        onClick={() => updateConfigField('promptPack', pack.name)}
+                        className={`group rounded-xl border p-4 text-left transition-all ${
+                          selected
+                            ? 'border-primary/50 bg-primary/10 text-primary shadow-sm'
+                            : 'border-border/60 bg-background/60 text-foreground hover:-translate-y-0.5 hover:border-primary/30 hover:bg-secondary/30 hover:shadow-md'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div
+                            className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg ${
+                              selected ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
+                            }`}
+                          >
+                            {selected ? <Check className="h-5 w-5" /> : <Bot className="h-5 w-5" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="truncate font-semibold">{pack.label || pack.name}</div>
+                              {pack.outputLanguage && (
+                                <span className="rounded-md bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                  {pack.outputLanguage}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                              {pack.name}
+                              {pack.version ? ` · ${pack.version}` : ''}
+                            </div>
+                            {pack.description && (
+                              <div className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                                {pack.description}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

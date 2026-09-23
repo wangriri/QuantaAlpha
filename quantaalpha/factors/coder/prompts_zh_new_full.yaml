@@ -1,0 +1,146 @@
+evolving_strategy_factor_implementation_v1_system: |-
+  用户正在以下场景中实现一些因子：
+  {{ scenario }}
+
+  你的目标是输出能够正确计算目标因子值的代码。
+
+  为了帮助你写出正确代码，用户可能提供以下信息：
+  1. 与目标相似的正确代码实现
+  2. 你之前失败的代码及对应反馈
+  3. 最新失败代码的建议，以及若干“相似报错 -> 修正版本”的示例
+
+  你必须认真阅读自己最近一次失败尝试，不要破坏已经正确的部分，只修正真正有问题的地方。
+
+  {% if queried_former_failed_knowledge|length != 0 %}
+  --------------Your former latest attempt:---------------
+  =====Code to the former implementation=====
+  {{ queried_former_failed_knowledge[-1].implementation.code }}
+  =====Feedback to the former implementation=====
+  {{ queried_former_failed_knowledge[-1].feedback }}
+  {% endif %}
+
+  请输出合法 JSON。
+  All JSON keys must remain exactly in English as specified.
+  The code string must remain valid Python code and must not contain Markdown fences.
+  {
+      "code": "Python code string"
+  }
+
+evolving_strategy_factor_implementation_v2_user: |-
+  --------------Target factor information:---------------
+  {{ factor_information_str }}
+
+  {% if queried_similar_error_knowledge|length != 0 %}
+  {% if error_summary_critics is none %}
+  请回顾你上一次失败实现中遇到的错误。下面给出一些你在其他任务中遇到过的相似错误及其最终修正版本，请从中学习：
+  {% for error_content, similar_error_knowledge in queried_similar_error_knowledge %}
+  --------------Factor information to similar error ({{error_content}}):---------------
+  {{ similar_error_knowledge[0].target_task.get_task_information() }}
+  =====Code with similar error ({{error_content}}):=====
+  {{ similar_error_knowledge[0].implementation.code }}
+  =====Success code to former code with similar error ({{error_content}}):=====
+  {{ similar_error_knowledge[1].implementation.code }}
+  {% endfor %}
+  {% else %}
+  请回顾你上一次失败实现中遇到的错误。结合相似错误及其解决方式，下面是给你的修正建议：
+  {{error_summary_critics}}
+  {% endif %}
+  {% endif %}
+
+  {% if queried_similar_successful_knowledge|length != 0 %}
+  下面是一些相似组件任务的成功实现，可作为参考：
+  --------------Correct code to similar factors:---------------
+  {% for similar_successful_knowledge in queried_similar_successful_knowledge %}
+  =====Factor {{loop.index}}:=====
+  {{ similar_successful_knowledge.target_task.get_task_information() }}
+  =====Code:=====
+  {{ similar_successful_knowledge.implementation.code }}
+  {% endfor %}
+  {% endif %}
+
+  {% if latest_attempt_to_latest_successful_execution is not none %}
+  你已经尝试修正上一次失败代码，但仍然出错。下面是最近一次尝试及其反馈。新的代码要尽量避免再次触发同类错误：
+  =====Your latest attempt=====
+  {{ latest_attempt_to_latest_successful_execution.implementation.code }}
+  =====Feedback to your latest attempt=====
+  {{ latest_attempt_to_latest_successful_execution.feedback }}
+  {% endif %}
+
+evolving_strategy_error_summary_v2_system: |-
+  用户正在以下场景中实现一些因子：
+  {{ scenario }}
+  当前任务如下：
+  {{factor_information_str}}
+
+  你写出的代码出现了如下错误：
+  {{code_and_feedback}}
+
+  用户还提供了一些“相似错误及其最终正确解法”。
+  请参考这些示例，输出清晰、简短、准确的关键建议，帮助修正当前代码。
+
+  约束：
+  1. 不要输出代码。
+  2. 只指出最关键的问题。
+  3. 如果没有发现明显问题，输出 `No critics found`。
+
+  输出格式：
+  critic 1: 用中文写关键建议
+  critic 2: 用中文写关键建议
+
+evolving_strategy_error_summary_v2_user: |-
+  {% if queried_similar_error_knowledge|length != 0 %}
+  {% for error_content, similar_error_knowledge in queried_similar_error_knowledge %}
+  --------------Factor information to similar error ({{error_content}}):---------------
+  {{ similar_error_knowledge[0].target_task.get_task_information() }}
+  =====Code with similar error ({{error_content}}):=====
+  {{ similar_error_knowledge[0].implementation.code }}
+  =====Success code to former code with similar error ({{error_content}}):=====
+  {{ similar_error_knowledge[1].implementation.code }}
+  {% endfor %}
+  {% endif %}
+
+evaluator_output_format_system: |-
+  用户正在以下场景中实现一些因子：
+  {{ scenario }}
+
+  用户会提供目标输出格式。你的任务是判断当前输出是否符合该格式要求。
+
+  Output must be valid JSON.
+  All JSON keys must remain exactly in English as specified.
+  All explanatory string values should be written in Chinese.
+  {
+      "output_format_decision": true,
+      "output_format_feedback": "用中文说明输出格式是否正确"
+  }
+
+evaluator_final_decision_v1_system: |-
+  用户正在以下场景中实现一些因子：
+  {{ scenario }}
+
+  用户已经完成评估，并从 evaluator 获得了若干反馈。
+  evaluator 已经执行代码、生成因子值 dataframe，并提供了与代码和输出有关的若干反馈。
+  你的任务是综合场景、因子定义、执行反馈和代码反馈，给出最终判断。
+
+  判断逻辑：
+  1. 如果因子值与 ground truth 在小容差内完全一致，则视为实现正确。
+  2. 如果因子值与 ground truth 在 IC 或 RankIC 上高度一致，也可视为实现正确。
+  3. 如果没有 ground truth，则只要代码成功执行且逻辑与场景、因子定义一致，即可视为实现正确。
+  4. 任何异常，包括主动抛出的异常，都应被视为代码存在问题。
+
+  Output must be valid JSON.
+  All JSON keys must remain exactly in English as specified.
+  All explanatory string values should be written in Chinese.
+  {
+      "final_decision": true,
+      "final_feedback": "用中文写单行最终反馈"
+  }
+
+evaluator_final_decision_v1_user: |-
+  --------------Factor information:---------------
+  {{ factor_information }}
+  --------------Execution feedback:---------------
+  {{ execution_feedback }}
+  --------------Code feedback:---------------
+  {{ code_feedback }}
+  --------------Factor value feedback:---------------
+  {{ value_feedback }}

@@ -13,9 +13,10 @@ from quantaalpha.core.experiment import Task, Workspace
 from quantaalpha.core.prompts import Prompts
 from quantaalpha.llm.config import LLM_SETTINGS
 from quantaalpha.llm.client import APIBackend
+from quantaalpha.prompting import resolve_factor_coder_prompts_path, resolve_factor_qa_prompts_path
 
-evaluate_prompts = Prompts(file_path=Path(__file__).parent / "prompts.yaml")
-qa_evaluate_prompts = Prompts(file_path=Path(__file__).parent / "qa_prompts.yaml")
+evaluate_prompts = Prompts(file_path=resolve_factor_coder_prompts_path(Path(__file__).parent / "prompts.yaml"))
+qa_evaluate_prompts = Prompts(file_path=resolve_factor_qa_prompts_path(Path(__file__).parent / "qa_prompts.yaml"))
 
 
 class FactorEvaluator:
@@ -129,6 +130,7 @@ class FactorCodeEvaluator(FactorEvaluator):
             system_prompt=system_prompt,
             json_mode=False,
             reasoning_flag=False,
+            tag=self.__class__.__name__,
         )
 
         return critic_response, None

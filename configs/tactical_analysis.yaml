@@ -1,0 +1,11 @@
+enabled: true
+min_training_months: 6
+min_validation_months: 3
+min_trading_days_per_month: 10
+strong_best_month_quantile: 0.85
+burst_month_quantile: 0.8
+high_volatility_quantile: 0.75
+severe_loss_quantile: 0.15
+severe_drawdown_quantile: 0.15
+min_positive_month_ratio: 0.3
+min_burst_month_count: 1
