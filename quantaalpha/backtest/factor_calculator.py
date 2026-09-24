@@ -265,7 +265,7 @@ The code should:
 
 {self.OPERATIONS_DOC}
 
-The input data is a pandas DataFrame with multi-index (datetime, instrument) and columns: $open, $high, $low, $close, $volume, $vwap.
+The input data is a pandas DataFrame with multi-index (datetime, instrument) and daily feature columns such as $open, $high, $low, $close, $volume, $amount, $vwap, $return, $swing, $volume_ratio, $turnover_rate, $turnover_rate_f, $total_mv, $float_mv, $pe, $pe_ttm, $pb, $ps_ttm, $buy_sm_vol, $buy_sm_amount, $sell_sm_vol, $sell_sm_amount, $buy_lg_vol, $buy_lg_amount, $sell_lg_vol, $sell_lg_amount, $net_mf_vol, $net_mf_amount, $buying, and $selling.
 
 Please output ONLY the factor expression string that can be directly used with the expression parser. 
 The expression should use $variable format (e.g., $close, $open, $volume).
@@ -405,4 +405,3 @@ class QlibDataProvider:
         logger.info(f"Loaded stock data: {len(df)} rows")
         
         return df
-

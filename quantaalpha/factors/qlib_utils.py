@@ -59,6 +59,37 @@ def generate_data_folder_from_qlib(use_local: bool = True):
     logger.info("Data preparation done")
     
 
+def generate_data_folder_from_mongo(start: str = "2018-01-01", end: str = "2025-12-31"):
+    from quantaalpha.factors.data_template.mongo_daily_pv import (
+        MongoDailyPVConfig,
+        _database,
+        build_daily_pv,
+        build_debug_frame,
+        write_hdf,
+    )
+
+    config = MongoDailyPVConfig(start=start, end=end)
+    logger.info(f"Generating enhanced factor data from Mongo ({start} to {end})")
+    frame = build_daily_pv(_database(), config)
+
+    Path(FACTOR_COSTEER_SETTINGS.data_folder).mkdir(parents=True, exist_ok=True)
+    write_hdf(frame, Path(FACTOR_COSTEER_SETTINGS.data_folder) / "daily_pv.h5")
+    shutil.copy(
+        Path(__file__).parent / "data_template" / "README.md",
+        Path(FACTOR_COSTEER_SETTINGS.data_folder) / "README.md",
+    )
+
+    Path(FACTOR_COSTEER_SETTINGS.data_folder_debug).mkdir(parents=True, exist_ok=True)
+    write_hdf(
+        build_debug_frame(frame, config.debug_instruments),
+        Path(FACTOR_COSTEER_SETTINGS.data_folder_debug) / "daily_pv.h5",
+    )
+    shutil.copy(
+        Path(__file__).parent / "data_template" / "README.md",
+        Path(FACTOR_COSTEER_SETTINGS.data_folder_debug) / "README.md",
+    )
+    logger.info(f"Mongo data preparation done: rows={len(frame)}, columns={len(frame.columns)}")
+
 
 def get_file_desc(p: Path, variable_list=[]) -> str:
     """
@@ -161,7 +192,10 @@ def get_data_folder_intro(
     ):
         # FIXME: (xiao) I think this is writing in a hard-coded way.
         # get data folder intro does not imply that we are generating the data folder.
-        generate_data_folder_from_qlib(use_local=use_local)
+        if os.environ.get("FACTOR_CoSTEER_DATA_SOURCE", "").lower() == "mongo":
+            generate_data_folder_from_mongo()
+        else:
+            generate_data_folder_from_qlib(use_local=use_local)
     content_l = []
     
     for p in Path(FACTOR_COSTEER_SETTINGS.data_folder_debug).iterdir():
