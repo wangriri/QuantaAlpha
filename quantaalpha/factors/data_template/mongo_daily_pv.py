@@ -8,6 +8,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from quantaalpha.log import logger
+
 
 BASE_FIELDS = {
     "open": "$open",
@@ -109,16 +111,20 @@ def _collection_frame(db, collection: str, query: dict, projection: dict) -> pd.
     from pymongo.errors import PyMongoError
 
     if collection not in db.list_collection_names():
+        logger.info(f"Mongo collection missing: {collection}")
         return pd.DataFrame()
     last_error: Exception | None = None
     rows = []
+    columns = [column for column, enabled in projection.items() if enabled and column != "_id"]
     for _attempt in range(3):
         try:
+            logger.info(f"Loading Mongo collection: {collection}")
             cursor = db[collection].find(query, projection, no_cursor_timeout=True).batch_size(20000)
             try:
                 rows = list(cursor)
             finally:
                 cursor.close()
+            logger.info(f"Loaded Mongo collection: {collection}, rows={len(rows)}")
             last_error = None
             break
         except PyMongoError as exc:
@@ -128,7 +134,7 @@ def _collection_frame(db, collection: str, query: dict, projection: dict) -> pd.
         raise last_error
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame(rows)
+    return pd.DataFrame.from_records(rows, columns=columns)
 
 
 def _prepare_common(frame: pd.DataFrame) -> pd.DataFrame:
@@ -145,6 +151,7 @@ def _prepare_common(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _load_year(db, year: int, start_ymd: str, end_ymd: str) -> pd.DataFrame:
+    logger.info(f"Building daily feature frame for year={year}")
     query = {"trade_date": {"$gte": start_ymd, "$lte": end_ymd}}
     key_columns = ["datetime", "instrument"]
 
@@ -188,6 +195,7 @@ def _load_year(db, year: int, start_ymd: str, end_ymd: str) -> pd.DataFrame:
         moneyflow = _prepare_common(moneyflow).rename(columns=MONEYFLOW_FIELDS)
         base = base.merge(moneyflow, on=key_columns, how="left", validate="one_to_one")
 
+    logger.info(f"Built daily feature frame for year={year}, rows={len(base)}, columns={len(base.columns)}")
     return base
 
 
@@ -211,13 +219,15 @@ def normalize_daily_pv(frame: pd.DataFrame) -> pd.DataFrame:
 def build_daily_pv(db, config: MongoDailyPVConfig) -> pd.DataFrame:
     start_ymd = _to_ymd(config.start)
     end_ymd = _to_ymd(config.end)
-    frames = [
-        _load_year(db, year, start_ymd, end_ymd)
-        for year in _years(config.start, config.end)
-    ]
+    frames = []
+    for year in _years(config.start, config.end):
+        frame = _load_year(db, year, start_ymd, end_ymd)
+        if not frame.empty:
+            frames.append(frame)
     frames = [frame for frame in frames if not frame.empty]
     if not frames:
         raise RuntimeError("No Mongo daily stock data loaded")
+    logger.info(f"Normalizing daily feature frame, yearly_parts={len(frames)}")
     return normalize_daily_pv(pd.concat(frames, ignore_index=True))
 
 
@@ -228,6 +238,7 @@ def build_debug_frame(frame: pd.DataFrame, instrument_count: int) -> pd.DataFram
 
 def write_hdf(frame: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Writing HDF: {path}, rows={len(frame)}, columns={len(frame.columns)}")
     frame.to_hdf(path, key="data", mode="w", complevel=5, complib="blosc:zstd")
 
 
