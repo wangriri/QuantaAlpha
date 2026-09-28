@@ -22,6 +22,8 @@ from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 import pandas as pd
 
+from quantaalpha.backtest.expression_utils import replace_data_column_tokens
+
 # Add project root (from quantaalpha/backtest/ up two levels)
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
@@ -217,9 +219,7 @@ class CustomFactorCalculator:
             finally:
                 _sys.stdout = old_stdout
             
-            for col in df.columns:
-                if col.startswith('$'):
-                    expr = expr.replace(col[1:], f"df['{col}']")
+            expr = replace_data_column_tokens(expr, df.columns)
             
             exec_globals = {
                 'df': df,
@@ -529,9 +529,7 @@ class CustomFactorDataLoader:
         expr = parse_symbol(self.label_expr, df.columns)
         expr = parse_expression(expr)
         
-        for col in df.columns:
-            if col.startswith('$'):
-                expr = expr.replace(col[1:], f"df['{col}']")
+        expr = replace_data_column_tokens(expr, df.columns)
         
         exec_globals = {'df': df, 'np': np, 'pd': pd}
         for name in dir(func_lib):

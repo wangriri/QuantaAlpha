@@ -17,6 +17,8 @@ from typing import Dict, List, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 
+from quantaalpha.backtest.expression_utils import replace_data_column_tokens
+
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
@@ -187,9 +189,7 @@ Only the following operations are allowed in expressions:
             parsed_expr = parse_symbol(expr, df.columns)
             parsed_expr = parse_expression(parsed_expr)
             
-            for col in df.columns:
-                if col.startswith('$'):
-                    parsed_expr = parsed_expr.replace(col[1:], f"df['{col}']")
+            parsed_expr = replace_data_column_tokens(parsed_expr, df.columns)
             
             exec_globals = {
                 'df': df,
