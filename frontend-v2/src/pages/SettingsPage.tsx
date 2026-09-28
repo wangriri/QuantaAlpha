@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Settings, Save, RotateCcw, Eye, EyeOff, Check, X, AlertCircle, Loader2, Database, Sliders, Box, Cpu, Compass, Shuffle, Bot, BarChart3 } from 'lucide-react';
-import { getSystemConfig, getProviderModels, updateSystemConfig, healthCheck, getEvaluationConfig, updateEvaluationConfig } from '@/services/api';
-import type { EvaluationConfig, LlmModuleRoute, PromptPackOption } from '@/services/api';
+import { getSystemConfig, getProviderModels, updateSystemConfig, healthCheck, getEvaluationConfig, updateEvaluationConfig, getDailyFeatures } from '@/services/api';
+import type { DailyFeatureMetadata, EvaluationConfig, LlmModuleRoute, PromptPackOption } from '@/services/api';
 import { REFERENCE_MINING_DIRECTIONS, getDirectionLabel, type MiningDirectionItem } from '@/utils/miningDirections';
 import type { PromptPack } from '@/types';
 
@@ -79,7 +79,7 @@ const parseNumberField = (value: string, fallback: number) => {
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
-type SettingsTab = 'api' | 'data' | 'params' | 'evaluation' | 'directions';
+type SettingsTab = 'api' | 'data' | 'features' | 'params' | 'evaluation' | 'directions';
 
 const DEFAULT_EVALUATION_CONFIG: EvaluationConfig = {
   trainingStart: '2023-01-01', trainingEnd: '2025-06-30', validationStart: '2025-07-01', validationEnd: '2025-12-31',
@@ -102,6 +102,10 @@ export const SettingsPage: React.FC = () => {
   const [factorLibraries, setFactorLibraries] = useState<string[]>([]);
   const [promptPacks, setPromptPacks] = useState<PromptPackOption[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [dailyFeatures, setDailyFeatures] = useState<DailyFeatureMetadata | null>(null);
+  const [dailyFeaturesLoading, setDailyFeaturesLoading] = useState(false);
+  const [dailyFeaturesError, setDailyFeaturesError] = useState<string | null>(null);
+  const [featureSearch, setFeatureSearch] = useState('');
 
   const [models, setModels] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -141,6 +145,12 @@ export const SettingsPage: React.FC = () => {
   useEffect(() => {
     loadConfig();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'features' && !dailyFeatures && !dailyFeaturesLoading) {
+      loadDailyFeatures();
+    }
+  }, [activeTab, dailyFeatures, dailyFeaturesLoading]);
 
   const loadConfig = async () => {
     setIsLoading(true);
@@ -219,6 +229,20 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const loadDailyFeatures = async () => {
+    setDailyFeaturesLoading(true);
+    setDailyFeaturesError(null);
+    try {
+      const response = await getDailyFeatures();
+      if (!response.success || !response.data) throw new Error(response.message || '读取特征数据失败');
+      setDailyFeatures(response.data);
+    } catch (err: unknown) {
+      setDailyFeaturesError(err instanceof Error ? err.message : '读取特征数据失败');
+    } finally {
+      setDailyFeaturesLoading(false);
+    }
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
@@ -293,6 +317,16 @@ export const SettingsPage: React.FC = () => {
   };
 
   const isCustomModel = !models.includes(config.modelName);
+  const filteredDailyFeatures = useMemo(() => {
+    const keyword = featureSearch.trim().toLowerCase();
+    const features = dailyFeatures?.features || [];
+    if (!keyword) return features;
+    return features.filter((feature) => (
+      feature.name.toLowerCase().includes(keyword)
+      || feature.category.toLowerCase().includes(keyword)
+      || feature.description.toLowerCase().includes(keyword)
+    ));
+  }, [dailyFeatures, featureSearch]);
 
   if (isLoading) {
     return (
@@ -370,6 +404,7 @@ export const SettingsPage: React.FC = () => {
       <div className="flex gap-2 p-1 bg-secondary/20 rounded-xl w-fit flex-wrap">
         <TabButton id="api" label="配置 API" icon={Cpu} />
         <TabButton id="data" label="数据路径" icon={Database} />
+        <TabButton id="features" label="特征数据" icon={BarChart3} />
         <TabButton id="params" label="默认参数" icon={Sliders} />
         <TabButton id="evaluation" label="评估规则" icon={BarChart3} />
         <TabButton id="directions" label="挖掘方向" icon={Compass} />
@@ -673,6 +708,145 @@ export const SettingsPage: React.FC = () => {
                     ))}
                   </div>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Daily Feature Metadata Tab */}
+        {activeTab === 'features' && (
+          <Card className="glass card-hover animate-fade-in-up">
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Database className="h-5 w-5 text-primary" />
+                    当前特征数据
+                  </CardTitle>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    从 daily_pv.h5 实时读取列名和数据概览；文件更新后刷新即可同步。
+                  </p>
+                </div>
+                <Button variant="outline" onClick={loadDailyFeatures} disabled={dailyFeaturesLoading}>
+                  {dailyFeaturesLoading ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                  )}
+                  刷新
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {dailyFeaturesLoading && !dailyFeatures && (
+                <div className="flex items-center justify-center rounded-lg border border-border/60 bg-secondary/10 py-10 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                  正在读取 daily_pv.h5 元数据...
+                </div>
+              )}
+
+              {dailyFeaturesError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                  {dailyFeaturesError}
+                </div>
+              )}
+
+              {dailyFeatures && !dailyFeatures.exists && (
+                <div className="rounded-lg border border-warning/30 bg-warning/10 p-4">
+                  <div className="font-medium text-warning">未找到 daily_pv.h5</div>
+                  <div className="mt-2 break-all font-mono text-xs text-muted-foreground">{dailyFeatures.path}</div>
+                </div>
+              )}
+
+              {dailyFeatures?.exists && (
+                <>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-lg border border-border/60 bg-background/60 p-4">
+                      <div className="text-xs text-muted-foreground">特征列数</div>
+                      <div className="mt-1 text-2xl font-semibold">{dailyFeatures.featureCount}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-background/60 p-4">
+                      <div className="text-xs text-muted-foreground">样本行数</div>
+                      <div className="mt-1 text-2xl font-semibold">{dailyFeatures.rowCount?.toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-background/60 p-4">
+                      <div className="text-xs text-muted-foreground">股票数</div>
+                      <div className="mt-1 text-2xl font-semibold">{dailyFeatures.instrumentCount?.toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-background/60 p-4">
+                      <div className="text-xs text-muted-foreground">文件大小</div>
+                      <div className="mt-1 text-2xl font-semibold">{dailyFeatures.sizeText}</div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-border/60 bg-secondary/10 p-4">
+                    <div className="grid gap-3 text-sm md:grid-cols-2">
+                      <div>
+                        <span className="text-muted-foreground">时间范围：</span>
+                        <span className="font-medium">{dailyFeatures.dateMin} 至 {dailyFeatures.dateMax}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">更新时间：</span>
+                        <span className="font-medium">
+                          {dailyFeatures.modifiedAt ? new Date(dailyFeatures.modifiedAt).toLocaleString() : '--'}
+                        </span>
+                      </div>
+                      <div className="md:col-span-2">
+                        <span className="text-muted-foreground">文件路径：</span>
+                        <span className="break-all font-mono text-xs">{dailyFeatures.path}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(dailyFeatures.categories || {}).map(([category, count]) => (
+                      <Badge key={category} variant="outline" className="bg-background/60">
+                        {category} · {count}
+                      </Badge>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">特征列表</h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        当前显示 {filteredDailyFeatures.length} / {dailyFeatures.features.length} 个字段。
+                      </p>
+                    </div>
+                    <input
+                      type="search"
+                      value={featureSearch}
+                      onChange={(event) => setFeatureSearch(event.target.value)}
+                      placeholder="搜索变量名、分类或说明"
+                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary sm:w-72"
+                    />
+                  </div>
+
+                  <div className="max-h-[460px] overflow-auto rounded-lg border border-border/60">
+                    <table className="w-full min-w-[760px] text-left text-sm">
+                      <thead className="sticky top-0 z-10 bg-background/95 text-xs text-muted-foreground backdrop-blur">
+                        <tr>
+                          <th className="px-4 py-3 font-medium">变量名</th>
+                          <th className="px-4 py-3 font-medium">分类</th>
+                          <th className="px-4 py-3 font-medium">含义</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/60">
+                        {filteredDailyFeatures.map((feature) => (
+                          <tr key={feature.name} className="hover:bg-secondary/20">
+                            <td className="whitespace-nowrap px-4 py-3 font-mono font-semibold text-primary">{feature.name}</td>
+                            <td className="whitespace-nowrap px-4 py-3">
+                              <Badge variant="outline">{feature.category}</Badge>
+                            </td>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {feature.description || '暂无说明'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>

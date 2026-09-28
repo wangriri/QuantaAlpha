@@ -398,6 +398,31 @@ export async function updateSystemConfig(update: Record<string, unknown>) {
   });
 }
 
+export interface DailyFeatureItem {
+  name: string;
+  description: string;
+  category: string;
+}
+
+export interface DailyFeatureMetadata {
+  exists: boolean;
+  path: string;
+  sizeBytes?: number;
+  sizeText?: string;
+  modifiedAt?: string;
+  rowCount?: number;
+  featureCount?: number;
+  dateMin?: string | null;
+  dateMax?: string | null;
+  instrumentCount?: number;
+  features: DailyFeatureItem[];
+  categories?: Record<string, number>;
+}
+
+export async function getDailyFeatures() {
+  return request<DailyFeatureMetadata>('/api/v1/data/features');
+}
+
 // ========================== Prompt Flow API ==========================
 
 export interface PromptFlowNode {

@@ -50,6 +50,8 @@ TACTICAL_CONFIG_PATH = PROJECT_ROOT / "configs" / "tactical_analysis.yaml"
 TACTICAL_GROUP_TEST_DIR = PROJECT_ROOT / "data" / "results" / "tactical_group_tests"
 DEDUP_REPORT_DIR = PROJECT_ROOT / "data" / "results" / "dedup_reports"
 TRACE_ROOT = PROJECT_ROOT / "data" / "run_traces"
+DAILY_FEATURE_PATH = PROJECT_ROOT / "git_ignore_folder" / "factor_implementation_source_data" / "daily_pv.h5"
+DAILY_FEATURE_README_PATH = PROJECT_ROOT / "quantaalpha" / "factors" / "data_template" / "README.md"
 PROMPT_PACKS_DIR = PROJECT_ROOT / "quantaalpha" / "prompting" / "packs"
 PROMPT_PACK_DEFAULTS = {
     "zh_quant_v1": {"output_language": "zh-CN", "strict_json": True},
@@ -1238,6 +1240,93 @@ def _format_bytes(size: int) -> str:
     return f"{size} B"
 
 
+def _decode_hdf_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            return value
+    return value
+
+
+def _parse_feature_descriptions() -> Dict[str, str]:
+    if not DAILY_FEATURE_README_PATH.exists():
+        return {}
+    descriptions: Dict[str, str] = {}
+    pattern = re.compile(r"^(\$[A-Za-z0-9_]+):\s*(.+)$")
+    for line in DAILY_FEATURE_README_PATH.read_text(encoding="utf-8").splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            descriptions[match.group(1)] = match.group(2).strip()
+    return descriptions
+
+
+def _feature_category(name: str) -> str:
+    if name in {"$open", "$close", "$high", "$low", "$vwap", "$return", "$swing"}:
+        return "价格收益"
+    if name in {"$volume", "$amount", "$volume_ratio", "$turnover_rate", "$turnover_rate_f"}:
+        return "成交活跃"
+    if name in {"$total_mv", "$float_mv", "$pe", "$pe_ttm", "$pb", "$ps_ttm"}:
+        return "估值市值"
+    if any(token in name for token in ["buy", "sell", "net_mf", "buying", "selling"]):
+        return "资金流向"
+    return "其他"
+
+
+def _read_daily_feature_metadata() -> Dict[str, Any]:
+    if not DAILY_FEATURE_PATH.exists():
+        return {
+            "exists": False,
+            "path": str(DAILY_FEATURE_PATH),
+            "features": [],
+        }
+
+    import pandas as pd
+    import tables
+
+    descriptions = _parse_feature_descriptions()
+    stat = DAILY_FEATURE_PATH.stat()
+    with tables.open_file(DAILY_FEATURE_PATH, mode="r") as h5:
+        node = h5.get_node("/data")
+        columns = [_decode_hdf_value(value) for value in node.block0_items[:]]
+        dates = node.axis1_level0[:]
+        instruments = node.axis1_level1[:]
+        row_count = int(node.block0_values.nrows)
+        feature_count = int(len(columns))
+        date_min = pd.Timestamp(int(dates[0]), unit="ns").strftime("%Y-%m-%d") if len(dates) else None
+        date_max = pd.Timestamp(int(dates[-1]), unit="ns").strftime("%Y-%m-%d") if len(dates) else None
+        instrument_count = int(len(instruments))
+
+    features = [
+        {
+            "name": name,
+            "description": descriptions.get(name, ""),
+            "category": _feature_category(name),
+        }
+        for name in columns
+    ]
+    categories: Dict[str, int] = {}
+    for feature in features:
+        categories[feature["category"]] = categories.get(feature["category"], 0) + 1
+
+    return {
+        "exists": True,
+        "path": str(DAILY_FEATURE_PATH),
+        "sizeBytes": stat.st_size,
+        "sizeText": _format_bytes(stat.st_size),
+        "modifiedAt": datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(),
+        "rowCount": row_count,
+        "featureCount": feature_count,
+        "dateMin": date_min,
+        "dateMax": date_max,
+        "instrumentCount": instrument_count,
+        "features": features,
+        "categories": categories,
+    }
+
+
 def _safe_cleanup_roots() -> List[Path]:
     return [
         (PROJECT_ROOT / "data" / "factorlib").resolve(),
@@ -1776,6 +1865,13 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "timestamp": _now()}
+
+
+@app.get("/api/v1/data/features", response_model=ApiResponse)
+async def get_daily_features():
+    """Return current daily_pv.h5 feature metadata without loading the full data frame."""
+    metadata = await asyncio.to_thread(_read_daily_feature_metadata)
+    return ApiResponse(success=True, data=metadata)
 
 
 # ---- Mining endpoints ----
