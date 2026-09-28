@@ -119,11 +119,6 @@ def _h5_columns(path: Path) -> set[str]:
 
 def _stage_source_data(workspace: Path, expression: str, fallback_source: pd.DataFrame) -> Path:
     source_data_path = workspace / "daily_pv.h5"
-    if fallback_source is not None and not fallback_source.empty:
-        source_data_path.unlink(missing_ok=True)
-        fallback_source.to_hdf(source_data_path, key="data", mode="w")
-        return source_data_path
-
     canonical = _configured_daily_pv_path()
     required = _required_source_columns(expression)
 
@@ -135,6 +130,11 @@ def _stage_source_data(workspace: Path, expression: str, fallback_source: pd.Dat
                 return source_data_path
         except Exception:
             pass
+
+    if fallback_source is not None and not fallback_source.empty:
+        source_data_path.unlink(missing_ok=True)
+        fallback_source.to_hdf(source_data_path, key="data", mode="w")
+        return source_data_path
 
     fallback_source.to_hdf(source_data_path, key="data", mode="w")
     return source_data_path

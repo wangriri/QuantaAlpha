@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -37,6 +38,22 @@ os.environ.setdefault('JOBLIB_START_METHOD', 'loky')
 logger = logging.getLogger(__name__)
 
 DEFAULT_CACHE_DIR = Path(os.environ.get("FACTOR_CACHE_DIR", "data/results/factor_cache"))
+
+
+def _configured_daily_pv_path() -> Path:
+    configured = os.environ.get("FACTOR_CoSTEER_DATA_FOLDER", "")
+    base = Path(configured) if configured else project_root / "git_ignore_folder" / "factor_implementation_source_data"
+    if not base.is_absolute():
+        base = project_root / base
+    return (base / "daily_pv.h5").expanduser().resolve()
+
+
+def _filter_daily_pv_by_date(df: pd.DataFrame, start_time: str, end_time: str) -> pd.DataFrame:
+    if not isinstance(df.index, pd.MultiIndex) or "datetime" not in df.index.names:
+        return df
+    dates = pd.to_datetime(df.index.get_level_values("datetime"))
+    mask = (dates >= pd.Timestamp(start_time)) & (dates <= pd.Timestamp(end_time))
+    return df.loc[mask]
 
 
 class CustomFactorCalculator:
@@ -209,6 +226,11 @@ class CustomFactorCalculator:
             import quantaalpha.factors.coder.function_lib as func_lib
             
             df = self.data_df.copy()
+
+            required_columns = set(re.findall(r"\$[A-Za-z_][A-Za-z0-9_]*", factor_expression or ""))
+            missing_columns = sorted(required_columns - set(df.columns))
+            if missing_columns:
+                raise KeyError(f"Missing data columns: {', '.join(missing_columns)}")
             
             expr = parse_symbol(factor_expression, df.columns)
             
@@ -553,6 +575,15 @@ def get_qlib_stock_data(config: Dict) -> pd.DataFrame:
     from qlib.data import D
     
     data_config = config.get('data', {})
+    start_time = data_config.get('start_time', '2016-01-01')
+    end_time = data_config.get('end_time', '2025-12-31')
+
+    daily_pv_path = _configured_daily_pv_path()
+    if daily_pv_path.exists():
+        df = pd.read_hdf(daily_pv_path, key="data")
+        df = _filter_daily_pv_by_date(df, start_time, end_time)
+        logger.debug(f"Loaded stock data from daily_pv.h5: {len(df)} rows, {len(df.columns)} columns")
+        return df
     
     # Prefer QLIB_DATA_DIR env (aligned with runner.py)
     provider_uri = (
@@ -568,8 +599,6 @@ def get_qlib_stock_data(config: Dict) -> pd.DataFrame:
     except Exception:
         pass  # Already initialized
     
-    start_time = data_config.get('start_time', '2016-01-01')
-    end_time = data_config.get('end_time', '2025-12-31')
     market = data_config.get('market', 'csi300')
     
     stock_list = D.instruments(market)

@@ -408,7 +408,10 @@ class SingleFactorEvaluator:
             }
 
             if should_rebalance:
-                day = selection_day[["code", "factor_value"]].dropna().copy()
+                if {"code", "factor_value"}.issubset(selection_day.columns):
+                    day = selection_day[["code", "factor_value"]].dropna().copy()
+                else:
+                    day = pd.DataFrame(columns=["code", "factor_value"])
                 if len(day) >= group_count:
                     day["oriented_factor"] = day["factor_value"] * direction
                     noise = (

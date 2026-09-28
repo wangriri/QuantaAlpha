@@ -18,6 +18,7 @@ from quantaalpha.evaluation.service import (
     _atomic_json_write,
     _stage_source_data,
 )
+from quantaalpha.evaluation.engine import SingleFactorEvaluator
 
 
 class _Result:
@@ -166,7 +167,7 @@ class EvaluationServicesTest(unittest.TestCase):
         self.assertEqual(Path(recorder.calls[0]["source_data_path"]), new_h5.parent / "daily_pv.h5")
         self.assertEqual(float(pd.read_hdf(new_h5, key="data").iloc[0]), 0.0)
 
-    def test_stage_source_data_prefers_calculator_source_over_canonical_daily_pv(self):
+    def test_stage_source_data_prefers_canonical_daily_pv_when_it_has_required_columns(self):
         source_dir = self.root / "source"
         source_dir.mkdir()
         canonical = source_dir / "daily_pv.h5"
@@ -181,8 +182,8 @@ class EvaluationServicesTest(unittest.TestCase):
         with patch.dict(os.environ, {"FACTOR_CoSTEER_DATA_FOLDER": str(source_dir)}):
             staged = _stage_source_data(workspace, "TS_MEAN($close, 5)", fallback)
 
-        self.assertFalse(staged.is_symlink())
-        pd.testing.assert_frame_equal(pd.read_hdf(staged, key="data"), fallback)
+        self.assertTrue(staged.is_symlink())
+        self.assertEqual(staged.resolve(), canonical.resolve())
 
     def test_unevaluated_mode_retries_retryable_data_errors(self):
         factors = {
@@ -194,6 +195,30 @@ class EvaluationServicesTest(unittest.TestCase):
         }
         selected = FactorLibraryEvaluationService._select_factors(factors, "unevaluated", None)
         self.assertEqual(selected, ["new", "retry"])
+
+    def test_group_returns_tolerates_benchmark_dates_without_factor_rows(self):
+        evaluator = SingleFactorEvaluator(_config(self.root))
+        aligned = pd.DataFrame(
+            {
+                "entry_date": [pd.Timestamp("2023-01-03")] * 10,
+                "code": [f"{i:06d}" for i in range(10)],
+                "factor_value": list(range(10)),
+                "oto_return": [0.001 * i for i in range(10)],
+            }
+        )
+        benchmark = pd.DataFrame(
+            {
+                "entry_date": [pd.Timestamp("2023-01-02")] + [pd.Timestamp("2023-01-03")] * 10,
+                "code": ["999999"] + [f"{i:06d}" for i in range(10)],
+                "oto_return": [0.0] + [0.001 * i for i in range(10)],
+            }
+        )
+
+        grouped, long_short, excess = evaluator._group_returns(aligned, 1, benchmark)
+
+        self.assertFalse(grouped.empty)
+        self.assertIn(pd.Timestamp("2023-01-03"), grouped.index)
+        self.assertFalse(excess.empty)
 
     def test_atomic_write_detects_concurrent_update(self):
         path = self.root / "library.json"

@@ -1,8 +1,11 @@
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
-from quantaalpha.backtest.custom_factor_calculator import CustomFactorCalculator
+from quantaalpha.backtest.custom_factor_calculator import CustomFactorCalculator, get_qlib_stock_data
 from quantaalpha.backtest.expression_utils import replace_data_column_tokens
 from quantaalpha.evaluation.service import _generic_factor_code
 from quantaalpha.factors.coder.expr_parser import parse_expression, parse_symbol
@@ -47,6 +50,32 @@ class ExpressionUtilsTest(unittest.TestCase):
         self.assertIsNotNone(result)
         expected = (frame["$pe_ttm"] + frame["$buy_lg_amount"]) / (frame["$amount"] + 1e-8)
         pd.testing.assert_series_equal(result, expected.rename("prefix_collision_factor"))
+
+    def test_stock_data_loader_prefers_enhanced_daily_pv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp)
+            index = pd.MultiIndex.from_product(
+                [pd.to_datetime(["2024-01-02", "2024-01-03", "2024-02-01"]), ["sz000001"]],
+                names=["datetime", "instrument"],
+            )
+            frame = pd.DataFrame(
+                {
+                    "$close": [10.0, 11.0, 12.0],
+                    "$pe_ttm": [1.0, 2.0, 3.0],
+                    "$buy_lg_amount": [100.0, 200.0, 300.0],
+                },
+                index=index,
+            )
+            frame.to_hdf(source_dir / "daily_pv.h5", key="data", mode="w")
+
+            with patch.dict("os.environ", {"FACTOR_CoSTEER_DATA_FOLDER": str(source_dir)}):
+                loaded = get_qlib_stock_data(
+                    {"data": {"start_time": "2024-01-01", "end_time": "2024-01-31"}}
+                )
+
+        self.assertIn("$pe_ttm", loaded.columns)
+        self.assertIn("$buy_lg_amount", loaded.columns)
+        self.assertEqual(len(loaded), 2)
 
     def test_generic_evaluation_code_template_compiles(self):
         code = _generic_factor_code("RANK($pe_ttm)", "prefix_collision_factor")
