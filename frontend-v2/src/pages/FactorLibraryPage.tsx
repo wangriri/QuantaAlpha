@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, Code, Database, Download, ExternalLink, Loader2, RefreshCw, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import { Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Badge } from '@/components/ui/Badge';
@@ -57,21 +57,31 @@ const Metric: React.FC<{ label: string; value: unknown; passed?: boolean }> = ({
   <div className="border-l-2 border-border py-1 pl-3"><div className="flex items-center gap-1 text-xs text-muted-foreground">{passed === true ? <Check className="h-3 w-3 text-emerald-500" /> : passed === false ? <X className="h-3 w-3 text-red-500" /> : null}{label}</div><div className="mt-1 font-mono text-base font-semibold">{metricValue(value)}</div></div>
 );
 
-const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'groups' | 'long_short' | 'excess' | 'decay' }> = ({ title, path, kind }) => {
+const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'groups' | 'excess' | 'decay' }> = ({ title, path, kind }) => {
   const [rows, setRows] = useState<Record<string, any>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (!path) { setRows([]); return; }
-    getEvaluationArtifact(path).then((response) => setRows((response.data?.rows || []).map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, key === 'date' ? value : Number(value)]))))).catch(() => setRows([]));
-  }, [path]);
-  if (!path) return null;
+    let active = true;
+    setRows([]); setError(''); setLoading(Boolean(path));
+    if (!path) return;
+    getEvaluationArtifact(path).then((response) => {
+      if (!response.success || !response.data) throw new Error('服务未返回图表数据');
+      if (active) setRows(response.data.rows.map((row) => Object.fromEntries(
+        Object.entries(row).map(([key, value]) => [key, key === 'date' ? value : value.trim() === '' || !Number.isFinite(Number(value)) ? null : Number(value)])
+      )));
+    }).catch((err) => {
+      if (active) setError(err instanceof Error ? err.message : '请求失败');
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [path, attempt]);
+  if (!path) return <div className="border-t border-border pt-4"><h4 className="mb-3 text-sm font-medium">{title}</h4><p className="text-sm text-muted-foreground">尚未生成图表文件</p></div>;
   const xKey = kind === 'decay' ? 'lag' : 'date';
-  const keys = kind === 'groups' ? ['G0', 'G9'] : kind === 'long_short' ? ['long_group', 'short_group', 'ls'] : kind === 'excess' ? ['head_net_return', 'benchmark_net_return', 'excess_return'] : kind === 'decay' ? ['ic', 'rank_ic'] : ['ic', 'rank_ic'];
+  const keys = kind === 'groups' ? ['G0', 'G9'] : kind === 'excess' ? ['head_net_return', 'benchmark_net_return', 'excess_return'] : kind === 'decay' ? ['ic', 'rank_ic'] : ['ic', 'rank_ic'];
   const names: Record<string, string> = {
     G0: 'G0累计 不含费',
     G9: 'G9累计 不含费',
-    long_group: '多头累计 含费',
-    short_group: '空头累计 含费',
-    ls: '净多空累计 含费',
     head_net_return: '头组累计 含费',
     benchmark_net_return: '基准累计 不含费',
     excess_return: '超额累计 头组含费-基准不含费',
@@ -79,7 +89,7 @@ const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'grou
     rank_ic: 'Rank IC',
   };
   const colors = ['#22c55e', '#ef4444', '#3b82f6'];
-  const chartRows = kind === 'groups' || kind === 'long_short' ? rows : kind === 'excess' ? rows.reduce<Record<string, any>[]>((out, row) => {
+  const chartRows = kind === 'excess' ? rows.reduce<Record<string, any>[]>((out, row) => {
     const previous = out[out.length - 1] || {};
     out.push({
       ...row,
@@ -87,7 +97,7 @@ const ArtifactChart: React.FC<{ title: string; path?: string; kind: 'ic' | 'grou
     });
     return out;
   }, []) : rows;
-  return <div className="border-t border-border pt-4"><h4 className="mb-3 text-sm font-medium">{title}</h4>{chartRows.length ? <div className="h-56"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><XAxis dataKey={xKey} tick={{ fontSize: 10 }} minTickGap={40} /><YAxis tick={{ fontSize: 10 }} width={48} domain={kind === 'excess' ? EXCESS_CHART_DOMAIN : undefined} ticks={kind === 'excess' ? EXCESS_CHART_TICKS : undefined} allowDataOverflow={kind === 'excess'} /><Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', fontSize: 12 }} /><Legend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 12 }} />{keys.map((key, index) => <Line key={key} type="monotone" dataKey={key} name={names[key] || key} dot={false} stroke={colors[index]} strokeWidth={kind === 'excess' ? 1.8 : 1.5} connectNulls />)}</LineChart></ResponsiveContainer></div> : <p className="text-sm text-muted-foreground">产物暂无可读数据</p>}</div>;
+  return <div className="border-t border-border pt-4"><h4 className="mb-3 text-sm font-medium">{title}</h4>{loading ? <p className="text-sm text-muted-foreground">正在加载图表…</p> : error ? <div role="alert" className="space-y-2 text-sm"><p className="text-red-500">图表加载失败，请检查服务连接后重试。</p><details className="break-all text-muted-foreground"><summary>错误详情</summary>{error}</details><Button variant="outline" onClick={() => setAttempt((value) => value + 1)}>重新加载图表</Button></div> : chartRows.length ? <div className="h-56"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><XAxis dataKey={xKey} tick={{ fontSize: 10 }} minTickGap={40} /><YAxis tick={{ fontSize: 10 }} width={48} domain={kind === 'excess' ? EXCESS_CHART_DOMAIN : undefined} ticks={kind === 'excess' ? EXCESS_CHART_TICKS : undefined} allowDataOverflow={kind === 'excess'} /><Tooltip contentStyle={{ background: '#111827', border: '1px solid #374151', fontSize: 12 }} /><Legend verticalAlign="top" height={24} wrapperStyle={{ fontSize: 12 }} />{keys.map((key, index) => <Line key={key} type="monotone" dataKey={key} name={names[key] || key} dot={false} stroke={colors[index]} strokeWidth={kind === 'excess' ? 1.8 : 1.5} connectNulls />)}</LineChart></ResponsiveContainer></div> : <p className="text-sm text-muted-foreground">图表文件中暂无数据</p>}</div>;
 };
 
 export const FactorLibraryPage: React.FC = () => {
@@ -99,6 +109,9 @@ export const FactorLibraryPage: React.FC = () => {
   const [selected, setSelected] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const detailRequest = useRef(0);
   const [cleanupPlan, setCleanupPlan] = useState<LibraryCleanupPlan | null>(null);
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupDeleting, setCleanupDeleting] = useState(false);
@@ -109,7 +122,7 @@ export const FactorLibraryPage: React.FC = () => {
       const response = await getFactors({ library: library || undefined, limit: 500 });
       setFactors(response.data?.factors || []); setLibraries(response.data?.libraries || []);
       if (!library && response.data?.libraries?.[0]) setLibrary(response.data.libraries[0]);
-    } catch { setError('无法读取因子库，请检查后端服务。'); }
+    } catch (err) { setError(`无法读取因子库：${err instanceof Error ? err.message : '请检查后端服务'}`); }
     finally { setLoading(false); }
   }, [library]);
   useEffect(() => { load(); }, [load]);
@@ -123,9 +136,19 @@ export const FactorLibraryPage: React.FC = () => {
   }), [factors, filter, search]);
 
   const select = async (factor: Factor) => {
-    try { const response = await getFactorDetail(factor.factorId, library || undefined); setSelected({ ...factor, ...(response.data?.factor || {}) }); }
-    catch { setSelected(factor); }
+    const requestId = ++detailRequest.current;
+    setSelected(factor); setDetailLoading(true); setDetailError('');
+    try {
+      const response = await getFactorDetail(factor.factorId, library || undefined);
+      if (!response.success || !response.data?.factor) throw new Error('服务未返回因子详情');
+      if (detailRequest.current === requestId) setSelected({ ...factor, ...response.data.factor });
+    } catch {
+      if (detailRequest.current === requestId) setDetailError('详情加载失败，当前仅显示列表摘要。请检查服务连接后重试。');
+    } finally {
+      if (detailRequest.current === requestId) setDetailLoading(false);
+    }
   };
+  const closeDetail = () => { ++detailRequest.current; setSelected(null); };
   const exportLibrary = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(factors, null, 2)], { type: 'application/json' }));
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `factors_${new Date().toISOString().slice(0, 10)}.json`; anchor.click(); URL.revokeObjectURL(url);
@@ -183,13 +206,15 @@ export const FactorLibraryPage: React.FC = () => {
 
     <div className="overflow-x-auto border-y border-border"><table className="w-full min-w-[1040px] text-left text-sm"><thead className="text-xs text-muted-foreground"><tr><th className="px-3 py-3 font-medium">因子</th><th className="px-3 py-3 font-medium">分类</th><th className="px-3 py-3 font-medium">状态</th><th className="px-3 py-3 font-medium">方向</th><th className="px-3 py-3 font-medium">IC</th><th className="px-3 py-3 font-medium">ICIR</th><th className="px-3 py-3 font-medium">收益差（不含费）</th><th className="px-3 py-3 font-medium">超额 Sharpe（头组含费）</th></tr></thead><tbody className="divide-y divide-border">{visible.map((factor) => { const classification = getFactorClassification(factor); return <tr key={factor.factorId} onClick={() => select(factor)} className="cursor-pointer hover:bg-secondary/30"><td className="max-w-sm px-3 py-3"><div className="truncate font-medium" title={factor.factorName}>{factor.factorName}</div><div className="mt-1 truncate font-mono text-xs text-muted-foreground">{factor.factorExpression}</div></td><td className="min-w-36 px-3 py-3"><ClassificationBadges classification={classification} compact /></td><td className="px-3 py-3"><Badge variant="outline">{labels[statusOf(factor)] || statusOf(factor)}</Badge></td><td className="px-3 py-3 font-mono">{factor.directionMultiplier === -1 ? '-1' : factor.directionMultiplier === 1 ? '+1' : '--'}</td><td className="px-3 py-3 font-mono">{number(factor.trainingMetrics?.ic ?? factor.ic, 4)}</td><td className="px-3 py-3 font-mono">{number(factor.trainingMetrics?.icir ?? factor.icir)}</td><td className="px-3 py-3 font-mono">{number(factor.trainingMetrics?.long_short_spread)}</td><td className="px-3 py-3 font-mono">{number(factor.trainingMetrics?.excess_sharpe)}</td></tr>; })}</tbody></table>{!visible.length && <div className="py-14 text-center text-sm text-muted-foreground">没有符合条件的因子</div>}</div>
 
-    {selected && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setSelected(null)}><div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-md border border-border bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-start justify-between border-b border-border bg-background px-5 py-4"><div className="min-w-0"><h2 className="break-words text-xl font-semibold">{selected.factorName || selected.factor_name}</h2><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">{labels[evaluation.status || selected.evaluationStatus || 'not_evaluated']}</Badge><Badge variant="outline">方向 {evaluation.direction_multiplier === -1 ? '-1' : '+1'}</Badge><Badge variant="outline"><ShieldCheck className="mr-1 h-3 w-3" />2026 {evaluation.oos_status || selected.oosStatus || 'sealed'}</Badge>{selectedClassification && <ClassificationBadges classification={selectedClassification} />}</div></div><Button variant="ghost" onClick={() => setSelected(null)} title="关闭"><X className="h-4 w-4" /></Button></div>
+    {selected && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeDetail}><div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-md border border-border bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="sticky top-0 z-10 flex items-start justify-between border-b border-border bg-background px-5 py-4"><div className="min-w-0"><h2 className="break-words text-xl font-semibold">{selected.factorName || selected.factor_name}</h2><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">{labels[evaluation.status || selected.evaluationStatus || 'not_evaluated']}</Badge><Badge variant="outline">方向 {evaluation.direction_multiplier === -1 ? '-1' : '+1'}</Badge><Badge variant="outline"><ShieldCheck className="mr-1 h-3 w-3" />2026 {evaluation.oos_status || selected.oosStatus || 'sealed'}</Badge>{selectedClassification && <ClassificationBadges classification={selectedClassification} />}</div></div><Button variant="ghost" onClick={closeDetail} title="关闭"><X className="h-4 w-4" /></Button></div>
       <div className="space-y-6 p-5">
+        {detailLoading && <p role="status" className="text-sm text-muted-foreground">正在加载因子详情…</p>}
+        {detailError && <div role="alert" className="space-y-2 text-sm text-red-500"><p>{detailError}</p><Button variant="outline" onClick={() => select(selected)}>重新加载详情</Button></div>}
         <section><h3 className="mb-3 text-sm font-medium">四项训练门槛</h3><div className="grid grid-cols-2 gap-4 md:grid-cols-4"><Metric label="|IC|" value={gates.ic?.value ?? training.ic_abs} passed={gates.ic?.passed} /><Metric label="ICIR" value={gates.icir?.value ?? training.icir} passed={gates.icir?.passed} /><Metric label="G9-G0 算术收益差（不含费）" value={gates.long_short_spread?.value ?? training.long_short_spread} passed={gates.long_short_spread?.passed} /><Metric label="头组超额 Sharpe（头组含费）" value={gates.excess_sharpe?.value ?? training.excess_sharpe} passed={gates.excess_sharpe?.passed} /></div></section>
         <section><h3 className="mb-3 text-sm font-medium">组合调仓</h3><div className="grid grid-cols-3 gap-4"><Metric label="调仓周期（日）" value={portfolio.rebalance_period_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /><Metric label="调仓日数" value={portfolio.rebalance_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /><Metric label="收益日数" value={portfolio.return_days ?? (missingPortfolio ? '旧评估未记录' : undefined)} /></div></section>
-        <section className="grid gap-4 md:grid-cols-2"><div><h3 className="mb-3 text-sm font-medium">训练 / 验证</h3><div className="overflow-hidden border-y border-border text-sm"><div className="grid grid-cols-3 px-2 py-2 text-xs text-muted-foreground"><span>区间</span><span>IC</span><span>超额 Sharpe（头组含费）</span></div><div className="grid grid-cols-3 border-t border-border px-2 py-2"><span>训练</span><span>{number(training.ic, 4)}</span><span>{number(training.excess_sharpe)}</span></div><div className="grid grid-cols-3 border-t border-border px-2 py-2"><span>2025H2</span><span>{number(validation.ic, 4)}</span><span>{number(validation.excess_sharpe)}</span></div>{Object.entries(evaluation.subperiods || selected.subperiods || {}).map(([name, metrics]: [string, any]) => <div key={name} className="grid grid-cols-3 border-t border-border px-2 py-2"><span>{name}</span><span>{number(metrics.ic, 4)}</span><span>{number(metrics.excess_sharpe)}</span></div>)}</div></div><div><h3 className="mb-3 text-sm font-medium">时间与防未来审计</h3><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">因子早于开仓</span><span>{evaluation.alignment?.factor_before_entry ? '通过' : '未通过'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">开仓早于退出</span><span>{evaluation.alignment?.entry_before_exit ? '通过' : '未通过'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">静态检查</span><span>{evaluation.lookahead_audit?.static?.status || '--'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">截断重算</span><span>{evaluation.lookahead_audit?.truncation?.status || '--'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">有效日 / 预期日</span><span>{training.coverage?.valid_days ?? '--'} / {training.coverage?.expected_days ?? '--'}</span></div></div></div></section>
+        <section className="grid gap-4 md:grid-cols-2"><div><h3 className="mb-3 text-sm font-medium">训练 / 验证</h3><div className="overflow-hidden border-y border-border text-sm"><div className="grid grid-cols-3 px-2 py-2 text-xs text-muted-foreground"><span>区间</span><span>IC</span><span>超额 Sharpe（头组含费）</span></div><div className="grid grid-cols-3 border-t border-border px-2 py-2"><span>训练</span><span>{number(training.ic, 4)}</span><span>{number(training.excess_sharpe)}</span></div><div className="grid grid-cols-3 border-t border-border px-2 py-2"><span>2025H2</span><span>{number(validation.ic, 4)}</span><span>{number(validation.excess_sharpe)}</span></div>{Object.entries(evaluation.subperiods || selected.subperiods || {}).map(([name, metrics]: [string, any]) => <div key={name} className="grid grid-cols-3 border-t border-border px-2 py-2"><span>{name}</span><span>{number(metrics.ic, 4)}</span><span>{number(metrics.excess_sharpe)}</span></div>)}</div></div><div><h3 className="mb-3 text-sm font-medium">时间与防未来审计</h3><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-muted-foreground">因子早于开仓</span><span>{evaluation.alignment?.factor_before_entry === true ? '通过' : evaluation.alignment?.factor_before_entry === false ? '未通过' : '未加载 / 未记录'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">开仓早于退出</span><span>{evaluation.alignment?.entry_before_exit === true ? '通过' : evaluation.alignment?.entry_before_exit === false ? '未通过' : '未加载 / 未记录'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">静态检查</span><span>{evaluation.lookahead_audit?.static?.status || '--'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">截断重算</span><span>{evaluation.lookahead_audit?.truncation?.status || '--'}</span></div><div className="flex justify-between"><span className="text-muted-foreground">有效日 / 预期日</span><span>{training.coverage?.valid_days ?? '--'} / {training.coverage?.expected_days ?? '--'}</span></div></div></div></section>
         <section><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><Code className="h-4 w-4" />因子表达式</h3><code className="block break-all border-y border-border py-3 text-xs">{selected.factorExpression || selected.factor_expression}</code></section>
-        <ArtifactChart title="十分组累计收益（G0/G9 不含费）" path={artifacts.training_group_cumulative} kind="groups" /><ArtifactChart title="多头、空头与净多空累计收益（ls=(long+short)/2，含费）" path={artifacts.training_long_short_cumulative} kind="long_short" /><ArtifactChart title="训练期每日 IC" path={artifacts.training_daily_ic} kind="ic" /><ArtifactChart title="IC 衰减与半衰期" path={artifacts.ic_decay} kind="decay" /><ArtifactChart title="头组（含费）、等权基准（不含费）与超额累计收益" path={artifacts.training_excess_returns} kind="excess" />
+        <ArtifactChart title="十分组累计收益（G0/G9 不含费）" path={artifacts.training_group_cumulative} kind="groups" /><ArtifactChart title="训练期每日 IC" path={artifacts.training_daily_ic} kind="ic" /><ArtifactChart title="IC 衰减与半衰期" path={artifacts.ic_decay} kind="decay" /><ArtifactChart title="头组（含费）、等权基准（不含费）与超额累计收益" path={artifacts.training_excess_returns} kind="excess" />
         <section><h3 className="mb-2 text-sm font-medium">产物文件</h3><div className="grid gap-2 md:grid-cols-2">{Object.entries(artifacts).map(([name, path]) => <div key={name} className="flex min-w-0 items-center gap-2 border-b border-border py-2 text-xs"><ExternalLink className="h-3.5 w-3.5 shrink-0" /><span className="shrink-0 text-muted-foreground">{name}</span><span className="truncate font-mono" title={String(path)}>{String(path)}</span></div>)}</div></section>
       </div></div></div>}
     {cleanupPlan && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !cleanupDeleting && setCleanupPlan(null)}><div className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-md border border-border bg-background shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="flex items-start justify-between border-b border-border px-5 py-4"><div><h2 className="flex items-center gap-2 text-lg font-semibold"><Trash2 className="h-5 w-5 text-red-500" />删除因子库及过程文件</h2><p className="mt-1 text-sm text-muted-foreground">{cleanupPlan.library}</p></div><Button variant="ghost" disabled={cleanupDeleting} onClick={() => setCleanupPlan(null)} title="关闭"><X className="h-4 w-4" /></Button></div><div className="space-y-4 p-5"><div className="border-y border-border py-3"><div className="text-xs text-muted-foreground">预计释放空间</div><div className="mt-1 text-2xl font-semibold">{cleanupPlan.totalSizeText}</div><div className="mt-1 text-xs text-muted-foreground">包含因子库、workspace、pickle cache、run trace、log 和库内评估产物路径。</div></div><div className="max-h-80 overflow-y-auto border-y border-border"><table className="w-full text-left text-xs"><thead className="sticky top-0 bg-background text-muted-foreground"><tr><th className="px-2 py-2 font-medium">类别</th><th className="px-2 py-2 font-medium">类型</th><th className="px-2 py-2 font-medium">大小</th><th className="px-2 py-2 font-medium">路径</th></tr></thead><tbody className="divide-y divide-border">{cleanupPlan.items.map((item) => <tr key={item.path}><td className="px-2 py-2"><Badge variant="outline">{item.category}</Badge></td><td className="px-2 py-2 font-mono">{item.kind}</td><td className="px-2 py-2 font-mono">{item.sizeText}</td><td className="max-w-md truncate px-2 py-2 font-mono" title={item.path}>{item.path}</td></tr>)}</tbody></table></div><div className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">删除后不会进入回收站。建议只删除已确认不再需要复盘的实验库。</div><div className="flex justify-end gap-2"><Button variant="outline" disabled={cleanupDeleting} onClick={() => setCleanupPlan(null)}>取消</Button><Button variant="primary" disabled={cleanupDeleting} onClick={confirmCleanup}>{cleanupDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}确认删除</Button></div></div></div></div>}

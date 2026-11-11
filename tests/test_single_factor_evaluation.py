@@ -151,6 +151,23 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         self.assertTrue(any("negative_period" in issue for issue in bad["issues"]))
         self.assertEqual(good["status"], "passed")
 
+    def test_inconclusive_lookahead_stops_before_backtest(self):
+        _dates, _panel, factor = make_fixture(direction=1)
+        evaluator = SingleFactorEvaluator(
+            make_config(self.tmp_path),
+            FakeMarketData(pd.DatetimeIndex([]), pd.DataFrame()),
+        )
+
+        result = evaluator.evaluate(
+            factor,
+            factor_id="inconclusive_factor",
+            factor_name="fixture_factor",
+            lookahead_audit={"status": "inconclusive"},
+        )
+
+        self.assertEqual(result.status, "lookahead_inconclusive")
+        self.assertEqual(result.lifecycle["status"], "lookahead_inconclusive")
+
     def test_fee_formula_matches_oto_membership_turnover_and_benchmark_is_uncosted_market_mean(self):
         dates, panel, factor = make_fixture(direction=1)
         evaluator = SingleFactorEvaluator(with_rebalance_period(make_config(self.tmp_path), 1), FakeMarketData(dates, panel))

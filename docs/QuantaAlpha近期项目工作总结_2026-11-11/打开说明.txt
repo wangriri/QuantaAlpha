@@ -1,0 +1,1 @@
+解压整个压缩包，然后双击 QuantaAlpha近期项目工作总结_2026-11-11.html。请保持 HTML、CSS、JS 和 report_assets 文件夹的相对位置不变；PDF 附件可在网页相应章节打开。

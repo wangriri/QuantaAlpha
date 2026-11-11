@@ -61,16 +61,6 @@ def KURT(df:pd.DataFrame):
     return df.groupby('datetime').transform(lambda x: kurtosis(x.dropna(), fisher=True, nan_policy='omit') if len(x.dropna()) >= 4 else np.nan)
 
 @datatype_adapter
-def MAX(df:pd.DataFrame):
-    """Cross-sectional max."""
-    return df.groupby('datetime').max()
-
-@datatype_adapter
-def MIN(df:pd.DataFrame):
-    """Cross-sectional min."""
-    return df.groupby('datetime').min()
-
-@datatype_adapter
 def MEDIAN(df:pd.DataFrame):
     """Cross-sectional median."""
     return df.groupby('datetime').median()
@@ -159,22 +149,24 @@ def TS_ARGMIN(df: pd.DataFrame, p: int = 5):
 
 
 
-def MAX(x:pd.DataFrame, y:pd.DataFrame, z:pd.DataFrame=None):
-    """Element-wise max of DataFrames."""
-    if z is None:
-        return np.maximum(x, y)
-    else:
-        return np.maximum(np.maximum(x, y), z)
+def MAX(x: pd.DataFrame, y: pd.DataFrame = None, z: pd.DataFrame = None):
+    """Cross-sectional max for one argument; element-wise max otherwise."""
+    if y is None:
+        if isinstance(x, (pd.Series, pd.DataFrame)) and "datetime" in x.index.names:
+            return x.groupby(level="datetime").transform("max")
+        return x
+    result = np.maximum(x, y)
+    return result if z is None else np.maximum(result, z)
 
 
-
-
-def MIN(x:pd.DataFrame, y:pd.DataFrame, z:pd.DataFrame=None):
-    """Element-wise min of DataFrames.""" 
-    if z is None:
-        return np.minimum(x, y)
-    else:
-        return np.minimum(np.minimum(x, y), z)
+def MIN(x: pd.DataFrame, y: pd.DataFrame = None, z: pd.DataFrame = None):
+    """Cross-sectional min for one argument; element-wise min otherwise."""
+    if y is None:
+        if isinstance(x, (pd.Series, pd.DataFrame)) and "datetime" in x.index.names:
+            return x.groupby(level="datetime").transform("min")
+        return x
+    result = np.minimum(x, y)
+    return result if z is None else np.minimum(result, z)
     
 
 

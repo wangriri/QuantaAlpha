@@ -199,27 +199,14 @@ class FactorLibraryEvaluationService:
         cache_location = entry.get("cache_location") or {}
         h5_path = cache_location.get("result_h5_path")
         expression = str(entry.get("factor_expression", "")).strip()
-        should_recompute_fallback_cache = (
-            cache_location.get("generated_by") == "evaluation_v2_expression_fallback" and bool(expression)
-        )
         run_id = uuid.uuid4().hex[:12]
         source_data_path: Path | None = None
         workspace: Path | None = None
 
-        if h5_path and Path(h5_path).exists() and not should_recompute_fallback_cache:
-            values = pd.read_hdf(h5_path)
-            workspace = Path(h5_path).parent
-        else:
-            if not expression:
-                return {
-                    "factor_id": factor_id,
-                    "factor_name": factor_name,
-                    "status": "data_error",
-                    "evaluation_engine": "oto_single_factor_v1",
-                    "error": {"type": "FactorExpressionMissing", "message": "factor_expression is unavailable", "retryable": False},
-                    "lifecycle": {"status": "not_evaluated", "active": False},
-                    "oos_status": "sealed",
-                }
+        if expression:
+            # A factor-library cache can point at the Debug result created
+            # during mining.  Formal/manual evaluation therefore always
+            # rebuilds expression-backed values from the configured full data.
             computed = self._compute_entry_from_expression(factor_id, factor_name, expression, entry, run_id)
             if computed.get("error"):
                 return {
@@ -235,6 +222,19 @@ class FactorLibraryEvaluationService:
             h5_path = str(computed["result_h5_path"])
             workspace = computed["workspace"]
             source_data_path = computed["source_data_path"]
+        elif h5_path and Path(h5_path).exists():
+            values = pd.read_hdf(h5_path)
+            workspace = Path(h5_path).parent
+        else:
+            return {
+                "factor_id": factor_id,
+                "factor_name": factor_name,
+                "status": "data_error",
+                "evaluation_engine": "oto_single_factor_v1",
+                "error": {"type": "FactorExpressionMissing", "message": "factor_expression is unavailable", "retryable": False},
+                "lifecycle": {"status": "not_evaluated", "active": False},
+                "oos_status": "sealed",
+            }
 
         code = _factor_code(entry)
         if not code:

@@ -1437,6 +1437,51 @@ def _prune_empty_cleanup_dirs(paths: List[Path]) -> List[str]:
     return pruned
 
 
+def _trace_library_names(run_dir: Path) -> set[str]:
+    """Use recorded destinations, not wall-clock proximity, to associate runs."""
+    names: set[str] = set()
+    for saved in run_dir.glob("round_*/task_*/*_saved_factors.json"):
+        record = _read_json_file(saved, {}) or {}
+        value = record.get("library_path")
+        if value:
+            names.add(Path(value).name)
+    if not names:
+        summary = _read_json_file(run_dir / "00_run_summary.json", {}) or {}
+        workspace = Path(summary.get("config_path") or "").parent.name
+        if workspace.startswith("workspace_exp_"):
+            names.add(f"all_factors_library_{workspace[len('workspace_'):]}.json")
+    return names
+
+
+def _trace_is_active(run_dir: Path) -> bool:
+    for task in tasks.values():
+        if task.get("status") == "running" and (
+            task.get("traceRunId") == run_dir.name or task.get("traceDir") == str(run_dir)
+        ):
+            return True
+    summary = _read_json_file(run_dir / "00_run_summary.json", {}) or {}
+    config_path = summary.get("config_path")
+    # Also protect workers launched by another backend instance.
+    processes = subprocess.run(["ps", "-axo", "command"], capture_output=True, text=True, check=True)
+    return any(
+        ("quantaalpha.cli" in line or "factor_mining" in line)
+        and (run_dir.name in line or bool(config_path and config_path in line))
+        for line in processes.stdout.splitlines()
+    )
+
+
+def _trace_cleanup_plan(run_id: str) -> Dict[str, Any]:
+    run_dir = _resolve_trace_dir(run_id)
+    if (TRACE_ROOT / run_id).is_symlink():
+        raise HTTPException(status_code=400, detail="Cannot delete a linked trace directory")
+    if _trace_is_active(run_dir):
+        raise HTTPException(status_code=409, detail="挖掘仍在运行，请先停止任务")
+    size = _path_size(run_dir)
+    return {"runId": run_id, "path": str(run_dir), "sizeText": _format_bytes(size),
+            "sizeBytes": size, "libraries": sorted(_trace_library_names(run_dir)),
+            "scope": "仅移除该挖掘过程记录；保留因子库、回测结果及原始数据。可从 data/deleted_traces 恢复。"}
+
+
 def _build_library_cleanup_plan(library: str) -> Dict[str, Any]:
     library_path = _resolve_factor_library(library)
     try:
@@ -1457,12 +1502,17 @@ def _build_library_cleanup_plan(library: str) -> Dict[str, Any]:
     for artifact_path in _collect_artifact_paths(raw_library):
         candidates.append((artifact_path, "evaluation_artifact"))
 
-    if timestamp is not None:
-        for run_dir in (PROJECT_ROOT / "data" / "run_traces").glob("run_*"):
-            run_ts = _timestamp_from_suffix(run_dir.name)
-            if run_ts is not None and abs((run_ts - timestamp).total_seconds()) <= 180:
+    for run_dir in TRACE_ROOT.glob("run_*"):
+        linked = _trace_library_names(run_dir)
+        if library_path.name in linked:
+            if _trace_is_active(run_dir):
+                raise HTTPException(status_code=409, detail="关联的挖掘任务仍在运行，请先停止")
+            # A trace shared with another surviving library must remain available.
+            if not any((PROJECT_ROOT / "data" / "factorlib" / name).exists()
+                       for name in linked - {library_path.name}):
                 candidates.append((run_dir, "run_trace"))
 
+    if timestamp is not None:
         # Project logs are UTC-like in current runs, while library suffixes are local time.
         expected_log_time = timestamp - timedelta(hours=8)
         for log_dir in (PROJECT_ROOT / "log").glob("20??-??-??_*"):
@@ -1996,6 +2046,23 @@ async def list_traces():
     ]
     runs.sort(key=lambda item: item.get("updatedAt") or item.get("startedAt") or "", reverse=True)
     return ApiResponse(success=True, data={"runs": runs})
+
+
+@app.get("/api/v1/traces/{run_id}/cleanup-preview", response_model=ApiResponse)
+async def preview_trace_cleanup(run_id: str):
+    return ApiResponse(success=True, data=_trace_cleanup_plan(run_id))
+
+
+@app.delete("/api/v1/traces/{run_id}", response_model=ApiResponse)
+async def delete_trace(run_id: str, confirm: bool = Query(False)):
+    if not confirm:
+        raise HTTPException(status_code=400, detail="请先预览并确认删除")
+    plan = _trace_cleanup_plan(run_id)
+    archive = PROJECT_ROOT / "data" / "deleted_traces"
+    archive.mkdir(exist_ok=True)
+    destination = archive / f"{run_id}_{uuid.uuid4().hex[:8]}"
+    Path(plan["path"]).rename(destination)
+    return ApiResponse(success=True, data={"runId": run_id, "recoveryPath": str(destination)}, message="过程记录已移至可恢复目录")
 
 
 @app.get("/api/v1/traces/{run_id}", response_model=ApiResponse)

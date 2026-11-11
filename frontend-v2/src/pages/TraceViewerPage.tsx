@@ -16,8 +16,9 @@ import {
   Settings2,
   Sigma,
   Workflow,
+  Trash2,
 } from 'lucide-react';
-import { getTrace, getTraceArtifact, listTraces } from '@/services/api';
+import { getTrace, getTraceArtifact, listTraces, previewTraceCleanup, deleteTrace, TraceCleanupPlan } from '@/services/api';
 import type { TraceArtifact, TraceDetail, TraceNode, TraceRunSummary } from '@/types';
 
 type TraceTreeItem = {
@@ -325,6 +326,9 @@ const DetailValue: React.FC<{ value: unknown }> = ({ value }) => {
 };
 
 export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunId }) => {
+  const [cleanup, setCleanup] = useState<TraceCleanupPlan | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [cleanupMessage, setCleanupMessage] = useState('');
   const [runs, setRuns] = useState<TraceRunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string>('');
   const [selectedRoundId, setSelectedRoundId] = useState<string>('all');
@@ -349,13 +353,31 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
       setRuns(nextRuns);
       const remembered = activeRunId || localStorage.getItem('quantaalpha_trace_run_id') || '';
       const preferred = nextRuns.find((run) => run.runId === remembered)?.runId || nextRuns[0]?.runId || '';
-      setSelectedRunId((current) => current || preferred);
+      setSelectedRunId((current) => nextRuns.some((run) => run.runId === current) ? current : preferred);
     } catch (err: any) {
       setError(err.message || '无法读取运行轨迹列表');
     } finally {
       setLoadingRuns(false);
     }
   }, [activeRunId]);
+
+  const previewDelete = async () => {
+    setError('');
+    try { const response = await previewTraceCleanup(selectedRunId); setCleanup(response.data || null); }
+    catch (err: any) { setError(err.message || '无法预览删除'); }
+  };
+  const confirmDelete = async () => {
+    if (!cleanup) return;
+    setDeleting(true);
+    try {
+      const response = await deleteTrace(cleanup.runId);
+      setCleanupMessage(`已移除 ${cleanup.runId}。恢复位置：${response.data?.recoveryPath}`);
+      setCleanup(null); setDetail(null); setArtifact(null); setSelectedNodeId(''); setSelectedRunId('');
+      localStorage.removeItem('quantaalpha_trace_run_id');
+      await loadRuns();
+    } catch (err: any) { setError(err.message || '删除失败'); }
+    finally { setDeleting(false); }
+  };
 
   const loadDetail = useCallback(async (runId: string) => {
     if (!runId) return;
@@ -572,6 +594,9 @@ export const TraceViewerPage: React.FC<{ activeRunId?: string }> = ({ activeRunI
               {loadingDetail || loadingRuns ? <Loader2 className="inline h-3.5 w-3.5 animate-spin" /> : <><RefreshCw className="mr-1 inline h-3.5 w-3.5" />刷新</>}
               </button>
           </div>
+          <button disabled={!selectedRunId || deleting || loadingDetail} onClick={previewDelete} className="mt-3 border border-red-300 px-3 py-2 text-sm text-red-600 disabled:opacity-50"><Trash2 className="mr-1 inline h-4 w-4" />删除当前挖掘过程</button>
+          {cleanupMessage && <p role="status" className="mt-3 break-all text-sm">{cleanupMessage}</p>}
+          {cleanup && <div role="dialog" aria-label="删除挖掘过程确认" className="mt-3 space-y-3 border border-red-300 bg-background p-4 text-sm"><h3 className="font-semibold">删除预览：{cleanup.runId}</h3><p>{cleanup.scope}</p><p>大小：{cleanup.sizeText}</p><p className="break-all">关联因子库：{cleanup.libraries.join('、') || '未记录'}</p><p className="break-all">目录：{cleanup.path}</p><button disabled={deleting} onClick={() => setCleanup(null)} className="mr-3 border px-3 py-2">取消</button><button disabled={deleting} onClick={confirmDelete} className="border border-red-300 px-3 py-2 text-red-600">{deleting ? '正在删除…' : '确认移除过程记录'}</button></div>}
           {detail && !detail.summary.graphComplete && (
             <div className="mt-3 border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               这次运行的 run_graph 不完整，页面已从事件流和目录文件兜底重建。

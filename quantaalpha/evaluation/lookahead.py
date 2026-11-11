@@ -56,12 +56,19 @@ class LookaheadAuditor:
             return {"status": "passed", "static": static_result, "truncation": {"status": "disabled"}}
 
         truncation = self.truncation_check(
+            expression=expression,
             code=code,
             factor_values=factor_values,
             workspace_path=workspace_path,
             source_data_path=source_data_path,
         )
-        status = "passed" if truncation.get("status") == "passed" else "lookahead_rejected"
+        truncation_status = truncation.get("status")
+        if truncation_status == "passed":
+            status = "passed"
+        elif truncation_status == "inconclusive":
+            status = "inconclusive"
+        else:
+            status = "lookahead_rejected"
         return {"status": status, "static": static_result, "truncation": truncation}
 
     def static_check(self, expression: str, code: str) -> dict[str, Any]:
@@ -129,6 +136,7 @@ class LookaheadAuditor:
     def truncation_check(
         self,
         *,
+        expression: str = "",
         code: str,
         factor_values: pd.Series | pd.DataFrame,
         workspace_path: str | Path | None,
@@ -166,11 +174,15 @@ class LookaheadAuditor:
         raw_source = pd.read_hdf(source, key="data")
         if not isinstance(raw_source.index, pd.MultiIndex) or "datetime" not in raw_source.index.names:
             return {"status": "failed", "reason": "daily_pv_index_invalid"}
+        required_columns = self._required_source_columns(expression, raw_source.columns)
+        if required_columns:
+            raw_source = raw_source.loc[:, required_columns]
         quantiles = self.config.section("lookahead_audit").get("cutoff_quantiles", [0.25, 0.5, 0.75])
         cutoffs = sorted({result_dates[min(len(result_dates) - 1, int((len(result_dates) - 1) * float(q)))] for q in quantiles})
         rtol = float(self.config.section("lookahead_audit").get("rtol", 1e-8))
         atol = float(self.config.section("lookahead_audit").get("atol", 1e-10))
         checks: list[dict[str, Any]] = []
+        valid_check_count = 0
 
         with tempfile.TemporaryDirectory(prefix="quantaalpha_lookahead_") as temp_dir:
             temp = Path(temp_dir)
@@ -206,15 +218,77 @@ class LookaheadAuditor:
                     truncated_result = truncated_result.iloc[:, 0]
                 expected = full_result.xs(cutoff, level="datetime").sort_index()
                 actual = truncated_result.xs(cutoff, level="datetime").sort_index()
+                expected_valid = expected.dropna()
+                actual_valid = actual.dropna()
                 joined = pd.concat([expected.rename("expected"), actual.rename("actual")], axis=1).dropna()
+
+                if expected_valid.empty and actual_valid.empty:
+                    checks.append(
+                        {
+                            "cutoff": str(cutoff.date()),
+                            "status": "skipped_no_comparable_values",
+                            "compared_values": 0,
+                        }
+                    )
+                    continue
+
+                if expected_valid.empty != actual_valid.empty:
+                    checks.append(
+                        {
+                            "cutoff": str(cutoff.date()),
+                            "status": "coverage_mismatch",
+                            "expected_values": len(expected_valid),
+                            "actual_values": len(actual_valid),
+                            "compared_values": len(joined),
+                        }
+                    )
+                    return {
+                        "status": "failed",
+                        "reason": "truncated_result_coverage_mismatch",
+                        "checks": checks,
+                    }
+
+                if joined.empty:
+                    checks.append(
+                        {
+                            "cutoff": str(cutoff.date()),
+                            "status": "index_mismatch",
+                            "expected_values": len(expected_valid),
+                            "actual_values": len(actual_valid),
+                            "compared_values": 0,
+                        }
+                    )
+                    return {
+                        "status": "failed",
+                        "reason": "truncated_result_index_mismatch",
+                        "checks": checks,
+                    }
+
+                valid_check_count += 1
                 matches = bool(
-                    len(joined) > 0
-                    and np.allclose(joined["expected"].to_numpy(), joined["actual"].to_numpy(), rtol=rtol, atol=atol)
+                    np.allclose(joined["expected"].to_numpy(), joined["actual"].to_numpy(), rtol=rtol, atol=atol)
                 )
-                checks.append({"cutoff": str(cutoff.date()), "compared_values": len(joined), "matches": matches})
+                checks.append(
+                    {
+                        "cutoff": str(cutoff.date()),
+                        "status": "compared",
+                        "compared_values": len(joined),
+                        "matches": matches,
+                    }
+                )
                 if not matches:
                     return {"status": "failed", "reason": "future_values_change_past_factor", "checks": checks}
+        if valid_check_count == 0:
+            return {"status": "inconclusive", "reason": "no_comparable_cutoff", "checks": checks}
         return {"status": "passed", "checks": checks}
+
+    @staticmethod
+    def _required_source_columns(expression: str, available: pd.Index) -> list[str]:
+        """Keep truncation fixtures small while preserving every expression input."""
+        required = set(re.findall(r"\$[A-Za-z_][A-Za-z0-9_]*", expression or ""))
+        if not required or not required.issubset(set(available)):
+            return []
+        return [column for column in available if column in required]
 
     @staticmethod
     def _call_name(node: ast.AST) -> str:

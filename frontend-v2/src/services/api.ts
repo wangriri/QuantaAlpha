@@ -529,3 +529,9 @@ export function connectMiningWs(
 
   return ws;
 }
+
+export interface TraceCleanupPlan {
+  runId: string; path: string; sizeText: string; sizeBytes: number; libraries: string[]; scope: string;
+}
+export const previewTraceCleanup = (runId: string) => request<TraceCleanupPlan>(`/api/v1/traces/${encodeURIComponent(runId)}/cleanup-preview`);
+export const deleteTrace = (runId: string) => request<{ recoveryPath: string }>(`/api/v1/traces/${encodeURIComponent(runId)}?confirm=true`, { method: 'DELETE' });

@@ -266,7 +266,146 @@ result.to_hdf(Path(__file__).with_name('result.h5'), key='data')
             code=code, factor_values=future, workspace_path=None, source_data_path=source_path
         )
         self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["reason"], "truncated_result_coverage_mismatch")
+
+    def test_truncation_recompute_detects_changed_historical_values(self):
+        dates = pd.bdate_range("2023-01-02", periods=8)
+        instruments = ["sh600000", "sh600001", "sh600002"]
+        index = pd.MultiIndex.from_product([dates, instruments], names=["datetime", "instrument"])
+        source = pd.DataFrame({"close": range(len(index))}, index=index, dtype=float)
+        source_path = self.root / "daily_pv.h5"
+        source.to_hdf(source_path, key="data")
+        full_result = source["close"] + source["close"].mean()
+        code = """from pathlib import Path
+import pandas as pd
+data = pd.read_hdf(Path(__file__).with_name('daily_pv.h5'), key='data')
+result = data['close'] + data['close'].mean()
+result.to_hdf(Path(__file__).with_name('result.h5'), key='data')
+"""
+        config = _config(self.root)
+        config.raw["periods"]["training"] = [str(dates[0].date()), str(dates[-1].date())]
+
+        outcome = LookaheadAuditor(config).truncation_check(
+            code=code, factor_values=full_result, workspace_path=None, source_data_path=source_path
+        )
+
+        self.assertEqual(outcome["status"], "failed")
         self.assertEqual(outcome["reason"], "future_values_change_past_factor")
+
+    def test_truncation_skips_jointly_empty_cutoff_and_checks_later_dates(self):
+        dates = pd.bdate_range("2023-01-02", periods=8)
+        instruments = ["sh600000", "sh600001", "sh600002"]
+        index = pd.MultiIndex.from_product([dates, instruments], names=["datetime", "instrument"])
+        source = pd.DataFrame({"value": range(len(index))}, index=index, dtype=float)
+        first_cutoff = dates[1]
+        source.loc[(first_cutoff, slice(None)), "value"] = float("nan")
+        source_path = self.root / "daily_pv.h5"
+        source.to_hdf(source_path, key="data")
+        code = """from pathlib import Path
+import pandas as pd
+data = pd.read_hdf(Path(__file__).with_name('daily_pv.h5'), key='data')
+data['value'].to_hdf(Path(__file__).with_name('result.h5'), key='data')
+"""
+        config = _config(self.root)
+        config.raw["periods"]["training"] = [str(dates[0].date()), str(dates[-1].date())]
+
+        outcome = LookaheadAuditor(config).truncation_check(
+            code=code, factor_values=source["value"], workspace_path=None, source_data_path=source_path
+        )
+
+        self.assertEqual(outcome["status"], "passed")
+        self.assertEqual(outcome["checks"][0]["status"], "skipped_no_comparable_values")
+        self.assertTrue(all(check.get("matches") for check in outcome["checks"][1:]))
+
+    def test_truncation_rejects_one_sided_empty_cutoff_as_coverage_mismatch(self):
+        dates = pd.bdate_range("2023-01-02", periods=8)
+        instruments = ["sh600000", "sh600001", "sh600002"]
+        index = pd.MultiIndex.from_product([dates, instruments], names=["datetime", "instrument"])
+        source = pd.DataFrame({"value": range(len(index))}, index=index, dtype=float)
+        source_path = self.root / "daily_pv.h5"
+        source.to_hdf(source_path, key="data")
+        code = """from pathlib import Path
+import numpy as np
+import pandas as pd
+data = pd.read_hdf(Path(__file__).with_name('daily_pv.h5'), key='data')
+result = pd.Series(np.nan, index=data.index, name='value')
+result.to_hdf(Path(__file__).with_name('result.h5'), key='data')
+"""
+        config = _config(self.root)
+        config.raw["periods"]["training"] = [str(dates[0].date()), str(dates[-1].date())]
+
+        outcome = LookaheadAuditor(config).truncation_check(
+            code=code, factor_values=source["value"], workspace_path=None, source_data_path=source_path
+        )
+
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["reason"], "truncated_result_coverage_mismatch")
+
+    def test_truncation_rejects_nonoverlapping_indexes_as_index_mismatch(self):
+        dates = pd.bdate_range("2023-01-02", periods=8)
+        instruments = ["sh600000", "sh600001", "sh600002"]
+        index = pd.MultiIndex.from_product([dates, instruments], names=["datetime", "instrument"])
+        source = pd.DataFrame({"value": range(len(index))}, index=index, dtype=float)
+        source_path = self.root / "daily_pv.h5"
+        source.to_hdf(source_path, key="data")
+        code = """from pathlib import Path
+import pandas as pd
+data = pd.read_hdf(Path(__file__).with_name('daily_pv.h5'), key='data')
+result = data['value'].copy()
+result.index = pd.MultiIndex.from_arrays(
+    [result.index.get_level_values('datetime'), 'other_' + result.index.get_level_values('instrument')],
+    names=['datetime', 'instrument'],
+)
+result.to_hdf(Path(__file__).with_name('result.h5'), key='data')
+"""
+        config = _config(self.root)
+        config.raw["periods"]["training"] = [str(dates[0].date()), str(dates[-1].date())]
+
+        outcome = LookaheadAuditor(config).truncation_check(
+            code=code, factor_values=source["value"], workspace_path=None, source_data_path=source_path
+        )
+
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["reason"], "truncated_result_index_mismatch")
+
+    def test_truncation_is_inconclusive_when_every_cutoff_is_jointly_empty(self):
+        dates = pd.bdate_range("2023-01-02", periods=8)
+        instruments = ["sh600000", "sh600001", "sh600002"]
+        index = pd.MultiIndex.from_product([dates, instruments], names=["datetime", "instrument"])
+        source = pd.DataFrame({"value": float("nan")}, index=index)
+        source_path = self.root / "daily_pv.h5"
+        source.to_hdf(source_path, key="data")
+        code = """from pathlib import Path
+import pandas as pd
+data = pd.read_hdf(Path(__file__).with_name('daily_pv.h5'), key='data')
+data['value'].to_hdf(Path(__file__).with_name('result.h5'), key='data')
+"""
+        config = _config(self.root)
+        config.raw["periods"]["training"] = [str(dates[0].date()), str(dates[-1].date())]
+
+        auditor = LookaheadAuditor(config)
+        outcome = auditor.truncation_check(
+            code=code, factor_values=source["value"], workspace_path=None, source_data_path=source_path
+        )
+        audit = auditor.audit(
+            expression="", code=code, factor_values=source["value"], workspace_path=None,
+            source_data_path=source_path,
+        )
+
+        self.assertEqual(outcome["status"], "inconclusive")
+        self.assertEqual(outcome["reason"], "no_comparable_cutoff")
+        self.assertEqual(audit["status"], "inconclusive")
+
+    def test_truncation_source_columns_are_limited_to_expression_inputs(self):
+        available = pd.Index(["$open", "$close", "$amount", "$pe", "$pe_ttm", "$buy_lg_amount"])
+
+        selected = LookaheadAuditor._required_source_columns(
+            "RANK($pe_ttm) + TS_MEAN($buy_lg_amount / ($amount + 1e-8), 5)",
+            available,
+        )
+
+        self.assertEqual(selected, ["$amount", "$pe_ttm", "$buy_lg_amount"])
+        self.assertEqual(LookaheadAuditor._required_source_columns("", available), [])
 
 
 if __name__ == "__main__":

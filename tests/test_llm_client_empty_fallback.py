@@ -212,7 +212,7 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
                 api.use_azure = False
                 api.chat_model = "deepseek-v4-flash"
                 api.reasoning_model = "deepseek-v4-flash"
-                api.chat_model_map = {tag: "gpt-5.5"}
+                api.chat_model_map = {tag: "gpt-5.6-sol"}
                 api.chat_base_url_map = {tag: "https://proxy.example/v1"}
                 api.chat_api_key_map = {tag: "tag-key"}
                 api.chat_stream = False
@@ -233,7 +233,7 @@ class LLMClientEmptyFallbackTest(unittest.TestCase):
                 self.assertEqual(resp, '{"ok": true}')
                 self.assertEqual(finish_reason, "stop")
                 self.assertEqual(len(api.chat_client.chat.completions.calls), 0)
-                self.assertEqual(tag_client.chat.completions.calls[0]["model"], "gpt-5.5")
+                self.assertEqual(tag_client.chat.completions.calls[0]["model"], "gpt-5.6-sol")
 
     def test_deepseek_v4_flash_empty_stream_raises_without_fallback(self):
         api = object.__new__(APIBackend)

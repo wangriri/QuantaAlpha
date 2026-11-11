@@ -100,6 +100,10 @@ class SingleFactorEvaluator:
             result.status = "lookahead_rejected"
             result.lifecycle = {"status": "lookahead_rejected", "active": False}
             return result
+        if result.lookahead_audit.get("status") == "inconclusive":
+            result.status = "lookahead_inconclusive"
+            result.lifecycle = {"status": "lookahead_inconclusive", "active": False}
+            return result
 
         try:
             factor = self._normalize_factor(factor_values, factor_name)

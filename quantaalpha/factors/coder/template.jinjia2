@@ -2,6 +2,7 @@
 import pandas as pd
 import numpy as np
 import os
+from quantaalpha.backtest.expression_utils import replace_data_column_tokens
 from quantaalpha.factors.coder.expr_parser import parse_expression, parse_symbol
 from quantaalpha.factors.coder.function_lib import *
 
@@ -13,9 +14,8 @@ def calculate_factor(expr: str, name: str):
     expr = parse_symbol(expr, df.columns)
     expr = parse_expression(expr)
 
-    # replace '$var' by 'df['var'] to extract var's actual values
-    for col in df.columns:
-        expr = expr.replace(col[1:], f"df[\'{col}\']")
+    # Match complete field names so pe/amount cannot corrupt longer names.
+    expr = replace_data_column_tokens(expr, df.columns)
 
     df[name] = eval(expr)
     result = df[name].astype(np.float64)
