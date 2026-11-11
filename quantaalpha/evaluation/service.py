@@ -48,20 +48,13 @@ def _factor_code(entry: dict[str, Any]) -> str:
 
 def _generic_factor_code(expression: str, factor_name: str) -> str:
     return f"""import os
-import numpy as np
 import pandas as pd
-from quantaalpha.backtest.expression_utils import replace_data_column_tokens
-from quantaalpha.factors.coder.expr_parser import parse_expression, parse_symbol
-from quantaalpha.factors.coder.function_lib import *
+from quantaalpha.factors.minute.runtime import calculate_factor_expression
 
 
 def calculate_factor(expr: str, name: str):
     df = pd.read_hdf('./daily_pv.h5', key='data')
-    expr = parse_symbol(expr, df.columns)
-    expr = parse_expression(expr)
-    expr = replace_data_column_tokens(expr, df.columns)
-    df[name] = eval(expr)
-    result = df[name].astype(np.float64)
+    result = calculate_factor_expression(expr, df, name)
     if os.path.exists('result.h5'):
         os.remove('result.h5')
     result.to_hdf('result.h5', key='data')

@@ -165,6 +165,16 @@ def _load_year(db, year: int, start_ymd: str, end_ymd: str) -> pd.DataFrame:
         return pd.DataFrame()
     base = _prepare_common(base).rename(columns=BASE_FIELDS)
 
+    adjustment = _collection_frame(
+        db,
+        f"Stock_Adj_{year}",
+        query,
+        {"_id": 0, "ts_code": 1, "trade_date": 1, "adj_factor": 1},
+    )
+    if not adjustment.empty:
+        adjustment = _prepare_common(adjustment).rename(columns={"adj_factor": "$adj_factor"})
+        base = base.merge(adjustment, on=key_columns, how="left", validate="one_to_one")
+
     daily_basic = _collection_frame(
         db,
         f"Stock_DailyBasic_{year}",
@@ -207,9 +217,15 @@ def normalize_daily_pv(frame: pd.DataFrame) -> pd.DataFrame:
     numeric_columns = [column for column in FINAL_COLUMNS if column not in {"$vwap", "$return"}]
     for column in numeric_columns:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    if "$adj_factor" in frame.columns:
+        factor = pd.to_numeric(frame["$adj_factor"], errors="coerce")
+        for column in ("$open", "$high", "$low", "$close"):
+            frame[column] = frame[column] * factor
     frame["$pe"] = frame["$pe"].fillna(0.0)
     frame["$pe_ttm"] = frame["$pe_ttm"].fillna(0.0)
     frame["$vwap"] = frame["$amount"] / (frame["$volume"] + 1e-8)
+    if "$adj_factor" in frame.columns:
+        frame["$vwap"] = frame["$vwap"] * pd.to_numeric(frame["$adj_factor"], errors="coerce")
     frame = frame.sort_values(["instrument", "datetime"])
     frame["$return"] = frame.groupby("instrument", sort=False)["$close"].pct_change().fillna(0.0)
     frame = frame.sort_values(["datetime", "instrument"]).set_index(["datetime", "instrument"])

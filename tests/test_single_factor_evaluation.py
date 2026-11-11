@@ -151,6 +151,15 @@ class SingleFactorEvaluationTest(unittest.TestCase):
         self.assertTrue(any("negative_period" in issue for issue in bad["issues"]))
         self.assertEqual(good["status"], "passed")
 
+    def test_static_lookahead_rejects_negative_minute_delay(self):
+        auditor = LookaheadAuditor(make_config(self.tmp_path))
+        result = auditor.static_check(
+            "M_TO_DAILY(M_DELAY($m_close, -1))",
+            "result = M_TO_DAILY(M_DELAY(close, -1))",
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("negative_period" in issue for issue in result["issues"]))
+
     def test_inconclusive_lookahead_stops_before_backtest(self):
         _dates, _panel, factor = make_fixture(direction=1)
         evaluator = SingleFactorEvaluator(

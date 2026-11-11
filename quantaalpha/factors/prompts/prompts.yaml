@@ -52,6 +52,14 @@ factor_hypothesis_specification: |-
 
 function_lib_description: |-
   Only the following operations are allowed in expressions: 
+  ### **Minute Data (calculated first, reduced to daily)**
+  - Minute fields: `$m_open`, `$m_high`, `$m_low`, `$m_close`, `$m_pre_close`, `$m_volume`, `$m_amount`.
+  - Every minute branch must end with a daily reducer: `M_FIRST`, `M_LAST`, `M_SESSION_SUM/MEAN/STD/MAX/MIN/MEDIAN/COUNT/RETURN`, `M_MAX_TIME`, `M_MIN_TIME`, or `M_TO_DAILY`.
+  - Select an inclusive intraday interval with `M_SLICE(A, start_HHMM, end_HHMM)`, for example `M_SLICE($m_close, 1430, 1500)`.
+  - Minute rolling operators use the `M_` prefix and reset each stock-day: `M_DELAY`, `M_DELTA`, `M_TS_PCTCHANGE`, `M_TS_MEAN/SUM/STD/VAR/MAX/MIN/MEDIAN/SKEW/KURT/RANK/ZSCORE/QUANTILE/MAD/ARGMAX/ARGMIN/CORR/COVARIANCE`, `M_SMA/EMA/WMA`, `M_COUNT/SUMIF/PROD/DECAYLINEAR`, `M_HIGHBAR/LOWBAR`, `M_REGBETA/REGRESI`, `M_MACD`, `M_RSI`, and `M_BB_MIDDLE/UPPER/LOWER`.
+  - A reduced minute result may be combined with daily fields and daily operators, e.g. `RANK(M_SESSION_RETURN(M_SLICE($m_close, 1430, 1500))) * RANK(1 / ($pe_ttm + 1e-8))`.
+  - Do not use a minute field outside a minute daily reducer. Full day t minute data produces F(t), which is first tradable at t+1 open.
+
   ### **Cross-sectional Functions**
   - **RANK(A)**: Ranking of each element in the cross-sectional dimension of A.
   - **ZSCORE(A)**: Z-score of each element in the cross-sectional dimension of A.

@@ -124,10 +124,30 @@ Only the following operations are allowed in expressions:
         results = {}
         success_count = 0
         fail_count = 0
+
+        # Minute formulas share each day's raw in-memory bars. Nothing is written to disk.
+        from quantaalpha.factors.minute.engine import contains_minute_expression
+        minute_factors = {
+            item.get('factor_name', 'unknown'): item.get('factor_expression', '')
+            for item in factors
+            if contains_minute_expression(item.get('factor_expression', ''))
+        }
+        if minute_factors:
+            try:
+                from quantaalpha.factors.minute.runtime import calculate_factor_expressions
+                minute_results = calculate_factor_expressions(minute_factors, self.data_df.copy())
+                for factor_name in minute_results:
+                    results[factor_name] = minute_results[factor_name]
+                    success_count += 1
+            except Exception as exc:
+                logger.error(f"  Minute factor batch failed: {exc}")
+                fail_count += len(minute_factors)
         
         for factor_info in factors:
             factor_name = factor_info.get('factor_name', 'unknown')
             factor_expr = factor_info.get('factor_expression', '')
+            if factor_name in minute_factors:
+                continue
             
             logger.info(f"  Computing factor: {factor_name}")
             
@@ -179,6 +199,11 @@ Only the following operations are allowed in expressions:
     def _calculate_with_parser(self, expr: str) -> Optional[pd.Series]:
         """Compute factor using expression parser."""
         try:
+            from quantaalpha.factors.minute.engine import contains_minute_expression
+            if contains_minute_expression(expr):
+                from quantaalpha.factors.minute.runtime import calculate_factor_expression
+                return calculate_factor_expression(expr, self.data_df.copy(), "factor")
+
             from quantaalpha.factors.coder.expr_parser import (
                 parse_expression, parse_symbol
             )

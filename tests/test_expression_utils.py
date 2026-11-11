@@ -176,7 +176,7 @@ class ExpressionUtilsTest(unittest.TestCase):
     def test_generic_evaluation_code_template_compiles(self):
         code = _generic_factor_code("RANK($pe_ttm)", "prefix_collision_factor")
         compile(code, "factor.py", "exec")
-        self.assertIn("replace_data_column_tokens(expr, df.columns)", code)
+        self.assertIn("calculate_factor_expression(expr, df, name)", code)
 
 
 if __name__ == "__main__":

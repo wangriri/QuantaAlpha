@@ -1,28 +1,23 @@
 
 import pandas as pd
-import numpy as np
 import os
-from quantaalpha.backtest.expression_utils import replace_data_column_tokens
-from quantaalpha.factors.coder.expr_parser import parse_expression, parse_symbol
-from quantaalpha.factors.coder.function_lib import *
+import json
+from quantaalpha.factors.minute.runtime import calculate_factor_expression
 
 
 def calculate_factor(expr: str, name: str):
     # stock dataframe
     df = pd.read_hdf('./daily_pv.h5', key='data')
     
-    expr = parse_symbol(expr, df.columns)
-    expr = parse_expression(expr)
-
-    # Match complete field names so pe/amount cannot corrupt longer names.
-    expr = replace_data_column_tokens(expr, df.columns)
-
-    df[name] = eval(expr)
-    result = df[name].astype(np.float64)
+    result = calculate_factor_expression(expr, df, name)
 
     if os.path.exists('result.h5'):
         os.remove('result.h5')
     result.to_hdf('result.h5', key='data')
+    report = result.attrs.get('minute_execution_report')
+    if report:
+        with open('minute_execution_report.json', 'w', encoding='utf-8') as handle:
+            json.dump(report, handle, ensure_ascii=False, indent=2)
 
 if __name__ == '__main__':
     # Input factor expression. Do NOT use the variable format like "df['$xxx']" in factor expressions. Instead, you should use "$xxx". 

@@ -26,7 +26,7 @@ from quantaalpha.factors.coder.factor_ast import (
 from .config import EvaluationConfig, PROJECT_ROOT
 
 
-_LAG_FUNCTIONS = {"DELAY", "DELTA", "TS_PCTCHANGE"}
+_LAG_FUNCTIONS = {"DELAY", "DELTA", "TS_PCTCHANGE", "M_DELAY", "M_DELTA", "M_TS_PCTCHANGE"}
 _LAG_METHODS = {"shift", "diff", "pct_change"}
 _FORBIDDEN_IMPORT_PREFIXES = {"pymongo", "requests", "httpx", "urllib", "qlib.data"}
 

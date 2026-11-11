@@ -13,6 +13,20 @@ from quantaalpha.factors.data_template.mongo_daily_pv import (
 
 
 class MongoDailyPVTest(unittest.TestCase):
+    def test_normalize_daily_pv_applies_point_in_time_adjustment_to_prices_only(self):
+        frame = pd.DataFrame({
+            "datetime": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+            "instrument": ["sz000001", "sz000001"],
+            "$open": [10.0, 6.0], "$high": [11.0, 6.6], "$low": [9.0, 5.4], "$close": [10.0, 6.0],
+            "$volume": [100.0, 100.0], "$amount": [1000.0, 600.0], "$adj_factor": [1.0, 2.0],
+        })
+        result = normalize_daily_pv(frame)
+        self.assertEqual(result["$close"].tolist(), [10.0, 12.0])
+        self.assertEqual(result["$volume"].tolist(), [100.0, 100.0])
+        self.assertEqual(result["$amount"].tolist(), [1000.0, 600.0])
+        self.assertEqual(result["$vwap"].round(6).tolist(), [10.0, 12.0])
+        self.assertAlmostEqual(result["$return"].iloc[1], 0.2)
+
     def test_ts_code_to_instrument(self):
         self.assertEqual(ts_code_to_instrument("000001.SZ"), "sz000001")
         self.assertEqual(ts_code_to_instrument("600000.SH"), "sh600000")

@@ -216,6 +216,11 @@ class CustomFactorCalculator:
         Returns: pd.Series with MultiIndex (datetime, instrument).
         """
         try:
+            from quantaalpha.factors.minute.engine import contains_minute_expression
+            if contains_minute_expression(factor_expression):
+                from quantaalpha.factors.minute.runtime import calculate_factor_expression
+                return calculate_factor_expression(factor_expression, self.data_df.copy(), factor_name)
+
             import io
             import sys as _sys
             from joblib import parallel_backend
