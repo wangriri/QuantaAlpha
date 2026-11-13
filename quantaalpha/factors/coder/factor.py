@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from typing import Tuple, Union
@@ -176,8 +177,7 @@ class FactorFBWorkspace(FBWorkspace):
                     env['PYTHONPATH'] = pythonpath
                 
                 subprocess.check_output(
-                    f"{FACTOR_COSTEER_SETTINGS.python_bin} {execution_code_path}",
-                    shell=True,
+                    [sys.executable, str(execution_code_path)],
                     cwd=self.workspace_path,
                     stderr=subprocess.STDOUT,
                     timeout=FACTOR_COSTEER_SETTINGS.file_based_execution_timeout,

@@ -636,6 +636,10 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
         quantaalpha mine --direction "[Initial Direction]" --config_path configs/experiment.yaml
 
     """
+    previous_minute_requirement = os.environ.get("QUANTAALPHA_REQUIRE_MINUTE_FACTOR")
+    previous_evaluation_config = os.environ.get("QUANTAALPHA_EVALUATION_CONFIG")
+    if direction and any(token in str(direction).lower() for token in ("分钟", "minute", "$m_", "m_session")):
+        os.environ["QUANTAALPHA_REQUIRE_MINUTE_FACTOR"] = "1"
     trace_recorder: RunRecorder | None = None
     run_error: str | None = None
     try:
@@ -652,6 +656,12 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
         config_default = _project_root / "configs" / "experiment.yaml"
         config_file = Path(config_path) if config_path else config_default
         run_cfg = load_run_config(config_file)
+        evaluation_path = ((run_cfg.get("backtest") or {}).get("evaluation") or {}).get("config_path")
+        if evaluation_path:
+            candidate = Path(evaluation_path)
+            if not candidate.is_absolute():
+                candidate = _project_root / candidate
+            os.environ["QUANTAALPHA_EVALUATION_CONFIG"] = str(candidate.resolve())
         planning_cfg = (run_cfg.get("planning") or {}) if isinstance(run_cfg, dict) else {}
         exec_cfg = (run_cfg.get("execution") or {}) if isinstance(run_cfg, dict) else {}
         evolution_cfg = (run_cfg.get("evolution") or {}) if isinstance(run_cfg, dict) else {}
@@ -811,6 +821,11 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
         else:
             model_loop = AlphaAgentLoop.load(path, use_local=use_local)
             model_loop.run(step_n=step_n, stop_event=stop_event)
+    except KeyboardInterrupt:
+        run_error = "Interrupted"
+        if trace_recorder is not None:
+            trace_recorder.write_run_complete(status="interrupted", error=run_error)
+        raise
     except Exception as e:
         run_error = str(e)
         if trace_recorder is not None:
@@ -818,6 +833,14 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
         logger.error(f"Error during execution: {str(e)}")
         raise
     finally:
+        if previous_minute_requirement is None:
+            os.environ.pop("QUANTAALPHA_REQUIRE_MINUTE_FACTOR", None)
+        else:
+            os.environ["QUANTAALPHA_REQUIRE_MINUTE_FACTOR"] = previous_minute_requirement
+        if previous_evaluation_config is None:
+            os.environ.pop("QUANTAALPHA_EVALUATION_CONFIG", None)
+        else:
+            os.environ["QUANTAALPHA_EVALUATION_CONFIG"] = previous_evaluation_config
         if trace_recorder is not None and run_error is None:
             trace_recorder.write_run_complete(status="completed")
         logger.info("Run finished or terminated")

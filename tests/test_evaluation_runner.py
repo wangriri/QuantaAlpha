@@ -120,7 +120,7 @@ class EvaluationRunnerTest(unittest.TestCase):
         runner = OTOSingleFactorRunner.__new__(OTOSingleFactorRunner)
         task = type("Task", (), {"factor_name": "factor", "factor_expression": "RANK($close)"})()
         workspace = _Workspace(self.root, execute_values=_values())
-        workspace.code_dict = {"factor.py": "print('factor')"}
+        workspace.code_dict = {}
         exp = type("Experiment", (), {"sub_tasks": [task], "sub_workspace_list": [workspace]})()
         formal_source = self.root / "formal_daily_pv.h5"
         captured = {}
@@ -159,6 +159,7 @@ class EvaluationRunnerTest(unittest.TestCase):
             runner.develop(exp)
 
         self.assertEqual(captured["source_data_path"], formal_source)
+        self.assertIn("calculate_factor_expression", captured["code"])
 
 
 if __name__ == "__main__":

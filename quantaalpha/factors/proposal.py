@@ -554,6 +554,43 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                     continue
                 expr = factor_data.get("expression", "")
                 attempt_record["raw"]["raw_expression"] = expr
+                if os.getenv("QUANTAALPHA_REQUIRE_MINUTE_FACTOR") == "1":
+                    from quantaalpha.factors.minute.engine import MINUTE_FIELD_PATTERN, MinuteFactorEngine
+                    if not MINUTE_FIELD_PATTERN.search(expr):
+                        feedback_item = "本轮要求真实分钟因子；公式必须引用 $m_* 原始分钟字段并用 M_SESSION_* 或 M_TO_DAILY 归约。不能用日频 VWAP 等字段做代理。"
+                        attempt_record["feedback_to_next_attempt"] = feedback_item
+                        attempts.append(copy.deepcopy(attempt_record))
+                        expression_duplication_prompt = feedback_item
+                        user_prompt = Environment(undefined=StrictUndefined).from_string(
+                            qa_prompt_dict["hypothesis2experiment"]["user_prompt"]
+                        ).render(
+                            targets=self.targets,
+                            target_hypothesis=context["target_hypothesis"],
+                            hypothesis_and_feedback=context["hypothesis_and_feedback"],
+                            function_lib_description=context["function_lib_description"],
+                            target_list=context["target_list"],
+                            RAG=context["RAG"],
+                            expression_duplication=feedback_item,
+                        )
+                        break
+                    try:
+                        from quantaalpha.factors.data_template.mongo_daily_pv import FINAL_COLUMNS
+                        MinuteFactorEngine.validate(expr, FINAL_COLUMNS)
+                    except (ValueError, KeyError) as exc:
+                        feedback_item = f"分钟公式不合法：{exc}。请修正后重新生成。"
+                        attempt_record["feedback_to_next_attempt"] = feedback_item
+                        attempts.append(copy.deepcopy(attempt_record))
+                        expression_duplication_prompt = feedback_item
+                        user_prompt = Environment(undefined=StrictUndefined).from_string(
+                            qa_prompt_dict["hypothesis2experiment"]["user_prompt"]
+                        ).render(
+                            targets=self.targets, target_hypothesis=context["target_hypothesis"],
+                            hypothesis_and_feedback=context["hypothesis_and_feedback"],
+                            function_lib_description=context["function_lib_description"],
+                            target_list=context["target_list"], RAG=context["RAG"],
+                            expression_duplication=feedback_item,
+                        )
+                        break
                 description = factor_data.get("description", "")
                 formulation = factor_data.get("formulation", "")
                 variables = factor_data.get("variables", {})

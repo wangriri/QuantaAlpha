@@ -15,7 +15,7 @@ from quantaalpha.log import logger
 from .config import load_evaluation_config
 from .engine import SingleFactorEvaluator
 from .lookahead import LookaheadAuditor
-from .service import _configured_daily_pv_path, _load_backtest_data_config
+from .service import _configured_daily_pv_path, _generic_factor_code, _load_backtest_data_config
 
 
 class OTOSingleFactorRunner(CachedRunner[QlibFactorExperiment]):
@@ -63,6 +63,8 @@ class OTOSingleFactorRunner(CachedRunner[QlibFactorExperiment]):
                 if isinstance(values, pd.Series):
                     values = values.rename(factor_name)
                 code = (getattr(workspace, "code_dict", {}) or {}).get("factor.py", "")
+                if not code and expression:
+                    code = _generic_factor_code(expression, factor_name)
                 workspace_path = getattr(workspace, "workspace_path", None)
                 audit = auditor.audit(
                     expression=expression,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,7 +43,7 @@ class EvaluationConfig:
 
 
 def load_evaluation_config(path: str | Path | None = None) -> EvaluationConfig:
-    config_path = Path(path or DEFAULT_CONFIG_PATH).expanduser().resolve()
+    config_path = Path(path or os.environ.get("QUANTAALPHA_EVALUATION_CONFIG") or DEFAULT_CONFIG_PATH).expanduser().resolve()
     with config_path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
     if not isinstance(raw, dict):

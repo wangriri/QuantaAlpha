@@ -2,6 +2,8 @@ evaluator_code_feedback_v1_system: |-
   用户正在以下场景中实现一些带有表达式的因子：
   {{ scenario }}
 
+  分钟字段 `$m_open/$m_high/$m_low/$m_close/$m_volume/$m_amount` 由 `quantaalpha.factors.minute.runtime.calculate_factor_expression` 在执行时从只读 MongoDB `min_1` 获取；`daily_pv.h5` 仅存日频字段是正常设计。分钟分支先用 `M_SESSION_*` 或 `M_TO_DAILY` 归约，再与日频字段组合。执行反馈若显示成功并生成非空因子值，不要因 HDF 没有 `$m_*` 列而判定分钟数据不可用。
+
   **Only the following operations are allowed in expression:**
   ### **Cross-sectional Functions**
   - **RANK(A)**: Ranking of each element in the cross-sectional dimension of A.
