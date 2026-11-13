@@ -14,6 +14,8 @@ import yaml
 
 from quantaalpha.factors.minute.mongo_reader import MongoMinuteProvider, MinuteDayResult, is_sh_sz_a_share, normalize_minute_documents
 from quantaalpha.factors.minute.quick_run import prepare_quick_run
+from quantaalpha.factors.coder.factor import stage_minute_debug_hdf
+from quantaalpha.evaluation.source_window import is_same_day_minute_expression, minute_source_start
 from quantaalpha.factors.minute.operators import M_DELAY, M_SESSION_RETURN, M_SLICE
 
 
@@ -38,6 +40,17 @@ class FakeProvider:
             frame = minute_frame(pd.Timestamp(trade_date).strftime("%Y-%m-%d"), instrument, [base, base + 1, base + 2])
             frames.append(frame[list(minute_columns)])
         return MinuteDayResult(pd.concat(frames).sort_index() if frames else pd.DataFrame(), [])
+
+
+class FakeStreamingProvider:
+    def __init__(self):
+        self.calls = []
+
+    def iter_stock_days(self, instrument, trade_dates, minute_columns):
+        self.calls.append((instrument, len(trade_dates)))
+        for date in trade_dates:
+            frame = minute_frame(pd.Timestamp(date).strftime("%Y-%m-%d"), instrument, [10, 11, 12])
+            yield MinuteDayResult(frame[list(minute_columns)], [])
 
 
 class MinuteOperatorTest(unittest.TestCase):
@@ -147,8 +160,37 @@ class MinuteEngineTest(unittest.TestCase):
         MinuteFactorEngine(provider).calculate("x", "M_SESSION_MEAN($m_close)", daily)
         self.assertNotIn("bj430001", provider.calls[0][1])
 
+    def test_streaming_provider_preserves_daily_output(self):
+        provider = FakeStreamingProvider()
+        result = MinuteFactorEngine(provider).calculate("x", "M_SESSION_RETURN($m_close) * $pe_ttm", self.daily)
+        self.assertEqual(len(provider.calls), 2)
+        self.assertEqual(result.notna().sum(), 4)
+        self.assertAlmostEqual(result.iloc[0], 2.0)
+
+    def test_same_day_audit_window_is_only_used_for_safe_formulas(self):
+        simple = "RANK(M_SESSION_RETURN(M_SLICE($m_close,1430,1500))) * RANK($pe_ttm)"
+        historical = "TS_MEAN(M_SESSION_RETURN($m_close),20) * RANK($pe_ttm)"
+        self.assertTrue(is_same_day_minute_expression(simple))
+        self.assertFalse(is_same_day_minute_expression(historical))
+        self.assertEqual(minute_source_start(simple, "2023-01-01"), pd.Timestamp("2022-11-22"))
+        self.assertIsNone(minute_source_start(historical, "2023-01-01"))
+
 
 class MinuteQuickRunTest(unittest.TestCase):
+    def test_debug_subset_does_not_change_original_daily_hdf(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            dates = pd.bdate_range("2025-01-01", periods=70)
+            index = pd.MultiIndex.from_product([dates, ["sz000001"]], names=["datetime", "instrument"])
+            source = root / "source.h5"
+            pd.DataFrame({"$pe_ttm": range(70)}, index=index).to_hdf(source, key="data")
+            staged = root / "daily_pv.h5"
+            staged.symlink_to(source)
+            stage_minute_debug_hdf(staged)
+            self.assertFalse(staged.is_symlink())
+            self.assertEqual(len(pd.read_hdf(staged, key="data")), 60)
+            self.assertEqual(len(pd.read_hdf(source, key="data")), 70)
+
     def test_daily_input_is_bounded_and_minute_bars_are_not_saved(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)

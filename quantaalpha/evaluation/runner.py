@@ -38,6 +38,34 @@ class OTOSingleFactorRunner(CachedRunner[QlibFactorExperiment]):
         if not tasks or not workspaces:
             raise FactorEmptyError("No factor tasks or workspaces available for OTO evaluation")
 
+        minute_values: dict[str, pd.Series] = {}
+        minute_expressions = {
+            task.factor_name: task.factor_expression
+            for task in tasks
+            if getattr(task, "factor_name", None) and getattr(task, "factor_expression", None)
+        }
+        if minute_expressions:
+            from quantaalpha.factors.minute.engine import contains_minute_expression
+
+            minute_expressions = {
+                name: expression for name, expression in minute_expressions.items()
+                if contains_minute_expression(expression)
+            }
+        if minute_expressions:
+            try:
+                from quantaalpha.backtest.custom_factor_calculator import CustomFactorCalculator
+                from quantaalpha.factors.minute.runtime import calculate_factor_expressions
+
+                combined = " + ".join(minute_expressions.values())
+                calculator = CustomFactorCalculator(
+                    config=_load_backtest_data_config(config, combined), auto_extract_cache=False,
+                )
+                batch = calculate_factor_expressions(minute_expressions, calculator.data_df)
+                minute_values = {name: batch[name] for name in minute_expressions}
+                logger.info(f"Computed {len(minute_values)} minute factors in one formal Mongo read pass")
+            except Exception as exc:
+                logger.warning(f"Minute batch computation failed; retrying factors individually: {exc}")
+
         for index, task in enumerate(tasks):
             factor_name = getattr(task, "factor_name", f"factor_{index}")
             expression = getattr(task, "factor_expression", "")
@@ -52,12 +80,14 @@ class OTOSingleFactorRunner(CachedRunner[QlibFactorExperiment]):
                 continue
             workspace = workspaces[index]
             try:
-                values = self._load_factor_values(
-                    workspace,
-                    factor_name=factor_name,
-                    expression=expression,
-                    config=config,
-                )
+                values = minute_values.get(factor_name)
+                if values is None:
+                    values = self._load_factor_values(
+                        workspace,
+                        factor_name=factor_name,
+                        expression=expression,
+                        config=config,
+                    )
                 if values is None:
                     raise FactorEmptyError(f"No factor values generated for {factor_name}")
                 if isinstance(values, pd.Series):
@@ -145,7 +175,7 @@ class OTOSingleFactorRunner(CachedRunner[QlibFactorExperiment]):
                 from quantaalpha.backtest.custom_factor_calculator import CustomFactorCalculator
 
                 calculator = CustomFactorCalculator(
-                    config=_load_backtest_data_config(config),
+                    config=_load_backtest_data_config(config, expression),
                     auto_extract_cache=False,
                 )
                 values = calculator.calculate_factor(factor_name, expression)

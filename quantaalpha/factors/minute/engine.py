@@ -75,13 +75,14 @@ class MinuteExecutionReport:
     requested_stock_days: int = 0
     valid_stock_days: int = 0
     issues: list[MinuteDataIssue] | None = None
+    issue_counts: Counter | None = None
 
     @property
     def coverage(self) -> float:
         return self.valid_stock_days / self.requested_stock_days if self.requested_stock_days else 0.0
 
     def to_dict(self) -> dict:
-        reasons = Counter(issue.reason.split(":", 1)[0] for issue in (self.issues or []))
+        reasons = self.issue_counts or Counter(issue.reason.split(":", 1)[0] for issue in (self.issues or []))
         return {
             "requested_stock_days": self.requested_stock_days,
             "valid_stock_days": self.valid_stock_days,
@@ -150,23 +151,48 @@ class MinuteFactorEngine:
         requested = valid = 0
 
         provider = self._provider()
-        for date in dates:
-            date_slice = daily_frame.xs(date, level="datetime", drop_level=False)
-            instruments = [item for item in date_slice.index.get_level_values("instrument").unique() if is_sh_sz_a_share(item)]
-            requested += len(instruments)
-            day = provider.load_day(date, instruments, required_fields)
-            issues.extend(day.issues)
-            if day.frame.empty:
-                continue
-            valid += day.frame.index.droplevel("minute").unique().size
-            for call, temp_name in temp_names.items():
-                value = _evaluate(call, day.frame)
-                value = _as_daily_series(value, day.frame.index.droplevel("minute").unique(), temp_name)
-                minute_values[temp_name].append(value)
+        if hasattr(provider, "iter_stock_days"):
+            arrays = {name: np.full(len(daily_frame), np.nan, dtype=np.float64) for name in temp_names.values()}
+            issue_counts: Counter = Counter()
+            all_dates = daily_frame.index.get_level_values("datetime")
+            for instrument, positions in daily_frame.groupby(level="instrument", sort=False).indices.items():
+                if not is_sh_sz_a_share(instrument):
+                    continue
+                stock_dates = [pd.Timestamp(value).normalize() for value in all_dates.take(positions)]
+                position_by_date = dict(zip(stock_dates, positions))
+                requested += len(stock_dates)
+                for day in provider.iter_stock_days(instrument, stock_dates, required_fields):
+                    for issue in day.issues:
+                        issue_counts[issue.reason.split(":", 1)[0]] += 1
+                    if day.frame.empty:
+                        continue
+                    date = pd.Timestamp(day.frame.index.get_level_values("datetime")[0]).normalize()
+                    position = position_by_date[date]
+                    valid += 1
+                    for call, temp_name in temp_names.items():
+                        value = _evaluate(call, day.frame)
+                        value = _as_daily_series(value, day.frame.index.droplevel("minute").unique(), temp_name)
+                        arrays[temp_name][position] = value.iloc[0]
+            minute_values = {name: pd.Series(values, index=daily_frame.index) for name, values in arrays.items()}
+        else:
+            issue_counts = None
+            for date in dates:
+                date_slice = daily_frame.xs(date, level="datetime", drop_level=False)
+                instruments = [item for item in date_slice.index.get_level_values("instrument").unique() if is_sh_sz_a_share(item)]
+                requested += len(instruments)
+                day = provider.load_day(date, instruments, required_fields)
+                issues.extend(day.issues)
+                if day.frame.empty:
+                    continue
+                valid += day.frame.index.droplevel("minute").unique().size
+                for call, temp_name in temp_names.items():
+                    value = _evaluate(call, day.frame)
+                    value = _as_daily_series(value, day.frame.index.droplevel("minute").unique(), temp_name)
+                    minute_values[temp_name].append(value)
 
         enriched = daily_frame.copy()
         for temp_name, parts in minute_values.items():
-            combined = pd.concat(parts).sort_index() if parts else pd.Series(dtype=float, name=temp_name)
+            combined = parts if isinstance(parts, pd.Series) else (pd.concat(parts).sort_index() if parts else pd.Series(dtype=float, name=temp_name))
             combined = combined[~combined.index.duplicated(keep="last")]
             enriched[temp_name] = combined.reindex(enriched.index)
 
@@ -176,7 +202,7 @@ class MinuteFactorEngine:
             for call, temp_name in temp_names.items():
                 rewritten = rewritten.replace(call, temp_name)
             results[name] = _as_daily_series(_evaluate(rewritten, enriched), enriched.index, name)
-        self.last_report = MinuteExecutionReport(requested, valid, issues)
+        self.last_report = MinuteExecutionReport(requested, valid, issues, issue_counts)
         return pd.DataFrame(results, index=enriched.index)
 
     def calculate(self, name: str, expression: str, daily_frame: pd.DataFrame) -> pd.Series:

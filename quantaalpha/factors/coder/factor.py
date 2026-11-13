@@ -17,6 +17,19 @@ from quantaalpha.core.utils import cache_with_pickle
 from quantaalpha.llm.client import md5_hash
 
 
+def stage_minute_debug_hdf(path: Path, max_sessions: int = 60) -> None:
+    if not path.is_symlink():
+        return
+    frame = pd.read_hdf(path, key="data")
+    if not isinstance(frame.index, pd.MultiIndex) or "datetime" not in frame.index.names:
+        raise ValueError("Minute debug input needs a datetime MultiIndex")
+    dates = pd.DatetimeIndex(frame.index.get_level_values("datetime").unique()).sort_values()
+    selected = dates[-max_sessions:]
+    frame = frame[frame.index.get_level_values("datetime").isin(selected)]
+    path.unlink()  # Removes the workspace symlink, never the source HDF.
+    frame.to_hdf(path, key="data", mode="w")
+
+
 class FactorTask(CoSTEERTask):
     # TODO:  generalized the attributes into the Task
     # - factor_* -> *
@@ -155,6 +168,14 @@ class FactorFBWorkspace(FBWorkspace):
                 from quantaalpha.log import logger
                 logger.warning(f"Data folder {source_data_path} does not exist or is empty. Skipping linking.")
 
+            minute_code = "$m_" in self.code_dict["factor.py"]
+            if minute_code and data_type == "Debug":
+                # Debug checks formula validity on recent sessions. Formal OTO
+                # evaluation still uses its configured full training period.
+                debug_hdf = self.workspace_path / "daily_pv.h5"
+                if debug_hdf.exists():
+                    stage_minute_debug_hdf(debug_hdf)
+
             execution_feedback = self.FB_EXECUTION_SUCCEEDED
             execution_success = False
             execution_error = None
@@ -180,7 +201,7 @@ class FactorFBWorkspace(FBWorkspace):
                     [sys.executable, str(execution_code_path)],
                     cwd=self.workspace_path,
                     stderr=subprocess.STDOUT,
-                    timeout=FACTOR_COSTEER_SETTINGS.file_based_execution_timeout,
+                    timeout=max(FACTOR_COSTEER_SETTINGS.file_based_execution_timeout, 86400) if minute_code else FACTOR_COSTEER_SETTINGS.file_based_execution_timeout,
                     env=env,
                 )
                 execution_success = True

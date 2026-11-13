@@ -1601,7 +1601,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
     task = tasks[task_id]
     try:
         is_minute_direction = any(token in req.direction.lower() for token in ("分钟", "minute", "$m_", "m_session"))
-        quick_test = is_minute_direction if req.minuteQuickTest is None else bool(req.minuteQuickTest and is_minute_direction)
+        quick_test = bool(req.minuteQuickTest and is_minute_direction)
         task["config"]["minuteQuickTest"] = quick_test
         # Build the command
         env = os.environ.copy()

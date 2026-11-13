@@ -11,6 +11,7 @@ import pandas as pd
 import yaml
 
 from .config import EvaluationConfig, PROJECT_ROOT, load_evaluation_config
+from .source_window import minute_source_start
 from .engine import SingleFactorEvaluator
 from .lookahead import LookaheadAuditor
 
@@ -74,7 +75,7 @@ def _evaluation_output_root(config: EvaluationConfig) -> Path:
     return output_dir
 
 
-def _load_backtest_data_config(config: EvaluationConfig) -> dict[str, Any]:
+def _load_backtest_data_config(config: EvaluationConfig, expression: str = "") -> dict[str, Any]:
     backtest_path = PROJECT_ROOT / "configs" / "backtest.yaml"
     raw: dict[str, Any] = {}
     if backtest_path.exists():
@@ -86,11 +87,12 @@ def _load_backtest_data_config(config: EvaluationConfig) -> dict[str, Any]:
     train_start, _train_end = config.training_period
     _valid_start, valid_end = config.validation_period
     start = pd.Timestamp(train_start) - pd.Timedelta(days=500)
+    minute_start = minute_source_start(expression, train_start)
     data_cfg.setdefault("provider_uri", "~/.qlib/qlib_data/cn_data")
     data_cfg.setdefault("region", "cn")
     data_cfg.setdefault("market", "csi300")
-    data_cfg["start_time"] = min(pd.Timestamp(data_cfg.get("start_time", start)), start).strftime("%Y-%m-%d")
-    data_cfg["end_time"] = max(pd.Timestamp(data_cfg.get("end_time", valid_end)), pd.Timestamp(valid_end)).strftime("%Y-%m-%d")
+    data_cfg["start_time"] = (minute_start if minute_start is not None else min(pd.Timestamp(data_cfg.get("start_time", start)), start)).strftime("%Y-%m-%d")
+    data_cfg["end_time"] = (pd.Timestamp(valid_end) if minute_start is not None else max(pd.Timestamp(data_cfg.get("end_time", valid_end)), pd.Timestamp(valid_end))).strftime("%Y-%m-%d")
     return {"data": data_cfg}
 
 
@@ -262,7 +264,7 @@ class FactorLibraryEvaluationService:
             workspace = _evaluation_output_root(self.config) / factor_id / run_id
             workspace.mkdir(parents=True, exist_ok=True)
 
-            calculator = CustomFactorCalculator(config=_load_backtest_data_config(self.config), auto_extract_cache=False)
+            calculator = CustomFactorCalculator(config=_load_backtest_data_config(self.config, expression), auto_extract_cache=False)
             values = calculator.calculate_factor(factor_name, expression)
             if values is None or len(values) == 0:
                 raise ValueError("expression computation returned no values")

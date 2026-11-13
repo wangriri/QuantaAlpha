@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import pandas as pd
 
@@ -160,6 +160,53 @@ class EvaluationRunnerTest(unittest.TestCase):
 
         self.assertEqual(captured["source_data_path"], formal_source)
         self.assertIn("calculate_factor_expression", captured["code"])
+
+    def test_minute_factors_share_one_formal_computation(self):
+        runner = OTOSingleFactorRunner.__new__(OTOSingleFactorRunner)
+        tasks = [
+            type("Task", (), {"factor_name": name, "factor_expression": "RANK(M_SESSION_MEAN($m_close))"})()
+            for name in ("first", "second")
+        ]
+        workspaces = [_Workspace(self.root, execute_values=None) for _ in tasks]
+        for workspace in workspaces:
+            workspace.code_dict = {}
+        exp = type("Experiment", (), {"sub_tasks": tasks, "sub_workspace_list": workspaces})()
+
+        class Calculator:
+            instances = 0
+
+            def __init__(self, **_kwargs):
+                type(self).instances += 1
+                self.data_df = _values().to_frame("$m_close")
+
+        class Auditor:
+            def __init__(self, _config):
+                pass
+
+            def audit(self, **_kwargs):
+                return {"status": "passed"}
+
+        class Evaluator:
+            def __init__(self, _config):
+                pass
+
+            def evaluate(self, *_args, **_kwargs):
+                return type("Result", (), {"status": "failed", "training": {}, "to_dict": lambda self: {"status": "failed", "training": {}}})()
+
+        batch = pd.DataFrame({name: _values(name) for name in ("first", "second")})
+        calculate = Mock(return_value=batch)
+        with (
+            patch("quantaalpha.evaluation.runner.load_evaluation_config", return_value=type("Config", (), {"config_hash": "hash", "section": lambda self, _name: {}})()),
+            patch("quantaalpha.evaluation.runner.LookaheadAuditor", Auditor),
+            patch("quantaalpha.evaluation.runner.SingleFactorEvaluator", Evaluator),
+            patch("quantaalpha.evaluation.runner._load_backtest_data_config", return_value={}),
+            patch("quantaalpha.backtest.custom_factor_calculator.CustomFactorCalculator", Calculator),
+            patch("quantaalpha.factors.minute.runtime.calculate_factor_expressions", calculate),
+        ):
+            runner.develop(exp)
+        self.assertEqual(Calculator.instances, 1)
+        self.assertEqual(calculate.call_count, 1)
+        self.assertTrue(all(workspace.execute_calls == 0 for workspace in workspaces))
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, Iterator
 
 import numpy as np
 import pandas as pd
@@ -84,42 +84,41 @@ def normalize_minute_documents(
     time_source = frame.get("trade_time")
     if time_source is None:
         return MinuteDayResult(pd.DataFrame(), [MinuteDataIssue(date, instrument, "missing_trade_time")])
-    frame["minute"] = time_source.map(_local_timestamp)
+    normalized_times = time_source.astype(str).str.replace("T", " ", regex=False).str.rstrip("Z")
+    frame["minute"] = pd.to_datetime(normalized_times, errors="coerce", format="mixed")
     frame = frame.dropna(subset=["minute"])
     frame = frame[frame["minute"].dt.normalize() == date]
 
     issues: list[MinuteDataIssue] = []
-    conflicting_duplicates = 0
-    clean_parts = []
-    for minute, group in frame.groupby("minute", sort=True):
-        if len(group) == 1:
-            clean_parts.append(group.iloc[0])
-            continue
-        compare_fields = sorted((SOURCE_FIELDS & set(group.columns)) | required)
-        first = group.iloc[0]
-        equal = True
-        for field_name in compare_fields:
-            values = pd.to_numeric(group[field_name], errors="coerce")
-            if values.isna().all():
+    if frame["minute"].duplicated().any():
+        conflicting_duplicates = 0
+        clean_parts = []
+        for minute, group in frame.groupby("minute", sort=True):
+            if len(group) == 1:
+                clean_parts.append(group.iloc[0])
                 continue
-            # The duplicated 2024-09-25 source batch mixes float32-like and
-            # decimal representations (including a few yuan of amount rounding).
-            # Treat economically identical rows as duplicates, while still
-            # rejecting material disagreements.
-            if not np.allclose(values, values.iloc[0], rtol=1e-6, atol=1e-6, equal_nan=True):
-                equal = False
-                break
-        if not equal:
-            conflicting_duplicates += 1
-        else:
-            clean_parts.append(first)
-
-    if conflicting_duplicates:
-        return MinuteDayResult(
-            pd.DataFrame(),
-            [MinuteDataIssue(date, instrument, f"conflicting_duplicates:{conflicting_duplicates}")],
-        )
-    clean = pd.DataFrame(clean_parts)
+            compare_fields = sorted((SOURCE_FIELDS & set(group.columns)) | required)
+            first = group.iloc[0]
+            equal = True
+            for field_name in compare_fields:
+                values = pd.to_numeric(group[field_name], errors="coerce")
+                if values.isna().all():
+                    continue
+                if not np.allclose(values, values.iloc[0], rtol=1e-6, atol=1e-6, equal_nan=True):
+                    equal = False
+                    break
+            if not equal:
+                conflicting_duplicates += 1
+            else:
+                clean_parts.append(first)
+        if conflicting_duplicates:
+            return MinuteDayResult(
+                pd.DataFrame(),
+                [MinuteDataIssue(date, instrument, f"conflicting_duplicates:{conflicting_duplicates}")],
+            )
+        clean = pd.DataFrame(clean_parts)
+    else:
+        clean = frame
     if len(clean) != expected_bars:
         return MinuteDayResult(
             pd.DataFrame(), [MinuteDataIssue(date, instrument, f"bar_count:{len(clean)}")]
@@ -190,6 +189,102 @@ class MongoMinuteProvider:
         query = {"ts_code": {"$in": ts_codes}, "trade_date": {"$in": [ymd, date.strftime("%Y-%m-%d")]}}
         rows = self._read_rows(collection, query, {"_id": 0, "ts_code": 1, "adj_factor": 1})
         return {row["ts_code"]: float(row["adj_factor"]) for row in rows if row.get("adj_factor") is not None}
+
+    def _stock_adjustment_factors(self, ts_code: str, dates: list[pd.Timestamp]) -> dict[pd.Timestamp, float]:
+        if self.daily_db is None:
+            raise RuntimeError("MONGO_DB must be configured to apply point-in-time adjustment factors")
+        result: dict[pd.Timestamp, float] = {}
+        for year in sorted({date.year for date in dates}):
+            selected = [date for date in dates if date.year == year]
+            start, end = selected[0], selected[-1]
+            query = {
+                "ts_code": ts_code,
+                "$or": [
+                    {"trade_date": {"$gte": start.strftime("%Y%m%d"), "$lte": end.strftime("%Y%m%d")}},
+                    {"trade_date": {"$gte": start.strftime("%Y-%m-%d"), "$lte": end.strftime("%Y-%m-%d")}},
+                ],
+            }
+            rows = self._read_rows(self.daily_db[f"Stock_Adj_{year}"], query, {"_id": 0, "trade_date": 1, "adj_factor": 1})
+            for row in rows:
+                if row.get("adj_factor") is not None:
+                    result[pd.Timestamp(row["trade_date"]).normalize()] = float(row["adj_factor"])
+        return result
+
+    def iter_stock_days(
+        self,
+        instrument: str,
+        trade_dates: Iterable[str | pd.Timestamp],
+        minute_columns: Iterable[str],
+    ) -> Iterator[MinuteDayResult]:
+        """Stream one indexed time-range cursor per stock; hold only one day of bars in memory."""
+        from pymongo.errors import AutoReconnect
+
+        dates = sorted({pd.Timestamp(date).normalize() for date in trade_dates})
+        if not dates or not is_sh_sz_a_share(instrument):
+            return
+        requested = set(dates)
+        columns = list(minute_columns)
+        source_fields = {MINUTE_COLUMNS[column] for column in columns}
+        ts_code = instrument_to_ts_code(instrument)
+        factors = self._stock_adjustment_factors(ts_code, dates) if source_fields & PRICE_FIELDS else {}
+        collection = self.minute_db[self._collection(ts_code)]
+        projection = {"_id": 0, "trade_time": 1, **{name: 1 for name in source_fields}}
+        end_exclusive = (dates[-1] + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        start = dates[0]
+        seen: set[pd.Timestamp] = set()
+        failures = 0
+
+        while start <= dates[-1]:
+            current_date = None
+            current_rows: list[dict] = []
+            try:
+                query = {"trade_time": {"$gte": start.strftime("%Y-%m-%d"), "$lt": end_exclusive}}
+                cursor = collection.find(query, projection).sort("trade_time", 1).batch_size(1000)
+                for row in cursor:
+                    date = pd.to_datetime(str(row.get("trade_time", ""))[:10], errors="coerce")
+                    if pd.isna(date):
+                        continue
+                    date = date.normalize()
+                    if current_date is not None and date != current_date:
+                        if current_date in requested:
+                            yield self._finish_stock_day(current_rows, current_date, instrument, source_fields, columns, factors)
+                            seen.add(current_date)
+                            failures = 0
+                        start = current_date + pd.Timedelta(days=1)
+                        current_rows = []
+                    current_date = date
+                    current_rows.append(row)
+                if current_date is not None and current_date in requested:
+                    yield self._finish_stock_day(current_rows, current_date, instrument, source_fields, columns, factors)
+                    seen.add(current_date)
+                break
+            except AutoReconnect:
+                failures += 1
+                if failures >= 3:
+                    raise
+                time.sleep(0.5 * failures)
+                # A partially read day is discarded and fetched again.
+                start = (max(seen) + pd.Timedelta(days=1)) if seen else dates[0]
+
+        for date in dates:
+            if date not in seen:
+                yield MinuteDayResult(pd.DataFrame(), [MinuteDataIssue(date, instrument, "no_data")])
+
+    def _finish_stock_day(
+        self, rows: list[dict], date: pd.Timestamp, instrument: str,
+        source_fields: set[str], columns: list[str], factors: dict[pd.Timestamp, float],
+    ) -> MinuteDayResult:
+        result = normalize_minute_documents(rows, date, instrument, source_fields, self.expected_bars)
+        if result.frame.empty:
+            return result
+        frame = result.frame.rename(columns={value: key for key, value in MINUTE_COLUMNS.items()})
+        if source_fields & PRICE_FIELDS:
+            factor = factors.get(date)
+            if factor is None:
+                return MinuteDayResult(pd.DataFrame(), [MinuteDataIssue(date, instrument, "missing_adj_factor")])
+            for column in set(frame.columns) & {f"$m_{name}" for name in PRICE_FIELDS}:
+                frame[column] = frame[column] * factor
+        return MinuteDayResult(frame[columns], [])
 
     def load_day(
         self,

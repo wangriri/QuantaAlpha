@@ -24,6 +24,7 @@ from quantaalpha.factors.coder.factor_ast import (
 )
 
 from .config import EvaluationConfig, PROJECT_ROOT
+from .source_window import is_same_day_minute_expression, minute_source_start
 
 
 _LAG_FUNCTIONS = {"DELAY", "DELTA", "TS_PCTCHANGE", "M_DELAY", "M_DELTA", "M_TS_PCTCHANGE"}
@@ -174,6 +175,9 @@ class LookaheadAuditor:
         raw_source = pd.read_hdf(source, key="data")
         if not isinstance(raw_source.index, pd.MultiIndex) or "datetime" not in raw_source.index.names:
             return {"status": "failed", "reason": "daily_pv_index_invalid"}
+        minute_start = minute_source_start(expression, self.config.training_period[0])
+        if minute_start is not None:
+            raw_source = raw_source[raw_source.index.get_level_values("datetime") >= minute_start]
         required_columns = self._required_source_columns(expression, raw_source.columns)
         if required_columns:
             raw_source = raw_source.loc[:, required_columns]
@@ -192,7 +196,10 @@ class LookaheadAuditor:
             else:
                 shutil.copy2(factor_py, temp_factor)
             for cutoff in cutoffs:
-                truncated = raw_source[raw_source.index.get_level_values("datetime") <= cutoff]
+                if is_same_day_minute_expression(expression):
+                    truncated = raw_source[raw_source.index.get_level_values("datetime") == cutoff]
+                else:
+                    truncated = raw_source[raw_source.index.get_level_values("datetime") <= cutoff]
                 truncated.to_hdf(temp / "daily_pv.h5", key="data", mode="w")
                 result_path = temp / "result.h5"
                 result_path.unlink(missing_ok=True)
@@ -204,7 +211,7 @@ class LookaheadAuditor:
                     env=env,
                     capture_output=True,
                     text=True,
-                    timeout=1200,
+                    timeout=86400 if minute_start is not None else 1200,
                 )
                 if completed.returncode != 0 or not result_path.exists():
                     return {

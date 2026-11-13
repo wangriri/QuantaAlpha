@@ -11,7 +11,7 @@ interface ChatInputProps {
 
 export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunning = false }) => {
   const [input, setInput] = useState('');
-  const [minuteQuickTest, setMinuteQuickTest] = useState(true);
+  const [minuteQuickTest, setMinuteQuickTest] = useState(false);
   const [useCustomMiningDirection, setUseCustomMiningDirection] = useState(false);
   const [promptPacks, setPromptPacks] = useState<PromptPackOption[]>([
     {
