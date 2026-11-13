@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -26,6 +27,7 @@ def parse_args():
     parser.add_argument("--end", required=True, help="YYYYMMDD")
     parser.add_argument("--output", default="data/results/minute_quality_scan.json")
     parser.add_argument("--max-collections", type=int, default=0, help="0 scans every SH/SZ A-share collection")
+    parser.add_argument("--progress-every", type=int, default=100, help="Print progress every N collections")
     return parser.parse_args()
 
 
@@ -53,8 +55,9 @@ def main():
 
     reasons, samples = Counter(), []
     stock_days = valid_stock_days = rows_read = 0
+    required_fields = {"open", "high", "low", "close", "vol", "amount"}
     projection = {"_id": 0, "trade_date": 1, "trade_time": 1, **{name: 1 for name in set(MINUTE_COLUMNS.values())}}
-    for collection_name in names:
+    for collection_index, collection_name in enumerate(names, start=1):
         ts_code = collection_name[:-5]
         instrument = ts_code_to_instrument(ts_code)
         cursor = db[collection_name].find(
@@ -67,7 +70,7 @@ def main():
                 row_date = str(row.get("trade_date", ""))[:10].replace("-", "")
                 if current_date is not None and row_date != current_date:
                     stock_days += 1
-                    result = normalize_minute_documents(rows, current_date, instrument, MINUTE_COLUMNS.values())
+                    result = normalize_minute_documents(rows, current_date, instrument, required_fields)
                     if result.frame.empty:
                         for issue in result.issues:
                             reason = issue.reason.split(":", 1)[0]
@@ -81,7 +84,7 @@ def main():
                 rows.append(row)
             if rows and current_date:
                 stock_days += 1
-                result = normalize_minute_documents(rows, current_date, instrument, MINUTE_COLUMNS.values())
+                result = normalize_minute_documents(rows, current_date, instrument, required_fields)
                 if result.frame.empty:
                     for issue in result.issues:
                         reasons[issue.reason.split(":", 1)[0]] += 1
@@ -89,6 +92,13 @@ def main():
                     valid_stock_days += 1
         finally:
             cursor.close()
+        if args.progress_every > 0 and collection_index % args.progress_every == 0:
+            print(
+                f"scanned_collections={collection_index}/{len(names)} "
+                f"stock_days={stock_days} valid_stock_days={valid_stock_days}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     report = {
         "database": db.name,

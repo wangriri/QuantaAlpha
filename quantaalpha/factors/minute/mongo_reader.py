@@ -88,6 +88,7 @@ def normalize_minute_documents(
     frame = frame[frame["minute"].dt.normalize() == date]
 
     issues: list[MinuteDataIssue] = []
+    conflicting_duplicates = 0
     clean_parts = []
     for minute, group in frame.groupby("minute", sort=True):
         if len(group) == 1:
@@ -100,16 +101,23 @@ def normalize_minute_documents(
             values = pd.to_numeric(group[field_name], errors="coerce")
             if values.isna().all():
                 continue
-            if not np.allclose(values, values.iloc[0], rtol=1e-9, atol=1e-8, equal_nan=True):
+            # The duplicated 2024-09-25 source batch mixes float32-like and
+            # decimal representations (including a few yuan of amount rounding).
+            # Treat economically identical rows as duplicates, while still
+            # rejecting material disagreements.
+            if not np.allclose(values, values.iloc[0], rtol=1e-6, atol=1e-6, equal_nan=True):
                 equal = False
                 break
         if not equal:
-            issues.append(MinuteDataIssue(date, instrument, f"conflicting_duplicate:{minute}"))
+            conflicting_duplicates += 1
         else:
             clean_parts.append(first)
 
-    if issues:
-        return MinuteDayResult(pd.DataFrame(), issues)
+    if conflicting_duplicates:
+        return MinuteDayResult(
+            pd.DataFrame(),
+            [MinuteDataIssue(date, instrument, f"conflicting_duplicates:{conflicting_duplicates}")],
+        )
     clean = pd.DataFrame(clean_parts)
     if len(clean) != expected_bars:
         return MinuteDayResult(
@@ -122,7 +130,8 @@ def normalize_minute_documents(
         )
     for name in required:
         clean[name] = pd.to_numeric(clean[name], errors="coerce")
-    if clean[list(required)].isna().any().any():
+    strict_required = sorted(required - {"pre_close"})
+    if strict_required and clean[strict_required].isna().any().any():
         return MinuteDayResult(
             pd.DataFrame(), [MinuteDataIssue(date, instrument, "null_required_value")]
         )

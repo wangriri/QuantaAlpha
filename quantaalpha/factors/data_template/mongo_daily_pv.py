@@ -227,7 +227,7 @@ def normalize_daily_pv(frame: pd.DataFrame) -> pd.DataFrame:
     if "$adj_factor" in frame.columns:
         frame["$vwap"] = frame["$vwap"] * pd.to_numeric(frame["$adj_factor"], errors="coerce")
     frame = frame.sort_values(["instrument", "datetime"])
-    frame["$return"] = frame.groupby("instrument", sort=False)["$close"].pct_change().fillna(0.0)
+    frame["$return"] = frame.groupby("instrument", sort=False)["$close"].pct_change(fill_method=None).fillna(0.0)
     frame = frame.sort_values(["datetime", "instrument"]).set_index(["datetime", "instrument"])
     return frame[FINAL_COLUMNS]
 

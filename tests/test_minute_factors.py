@@ -59,7 +59,7 @@ class MinuteDataQualityTest(unittest.TestCase):
         rows = []
         for minute, close in [("09:30:00", 10.0), ("09:31:00", 11.0), ("09:32:00", 12.0)]:
             rows.append({"trade_time": f"2024-09-25 {minute}", "close": close})
-        rows.append({"trade_time": "2024-09-25T09:30:00Z", "close": 10.0 + 1e-10})
+        rows.append({"trade_time": "2024-09-25T09:30:00Z", "close": 10.0 + 1e-7})
         result = normalize_minute_documents(rows, "2024-09-25", "sz300750", {"close"}, expected_bars=3)
         self.assertEqual(len(result.frame), 3)
         self.assertEqual(result.issues, [])
@@ -72,6 +72,16 @@ class MinuteDataQualityTest(unittest.TestCase):
         result = normalize_minute_documents(rows, "2024-09-25", "sz300750", {"close"}, expected_bars=1)
         self.assertTrue(result.frame.empty)
         self.assertIn("conflicting_duplicate", result.issues[0].reason)
+
+    def test_opening_pre_close_can_be_missing(self):
+        rows = [
+            {"trade_time": "2024-09-25 09:30:00", "close": 10.0, "pre_close": np.nan},
+            {"trade_time": "2024-09-25 09:31:00", "close": 10.1, "pre_close": 10.1},
+        ]
+        result = normalize_minute_documents(
+            rows, "2024-09-25", "sz300750", {"close", "pre_close"}, expected_bars=2
+        )
+        self.assertEqual(len(result.frame), 2)
 
 
 class MinuteEngineTest(unittest.TestCase):
