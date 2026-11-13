@@ -475,6 +475,10 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                 experiment_output_format=context["experiment_output_format"],
             )
         )
+        requested_count = os.getenv("QUANTAALPHA_FACTORS_PER_HYPOTHESIS")
+        if requested_count:
+            requested_count = max(1, int(requested_count))
+            system_prompt += f"\n本次只生成 {requested_count} 个因子；请严格遵守这个数量。"
         user_prompt = (
             Environment(undefined=StrictUndefined)
             .from_string(qa_prompt_dict["hypothesis2experiment"]["user_prompt"])
@@ -532,6 +536,9 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
             }
             try:
                 response_dict = robust_json_parse(resp)
+                if requested_count and isinstance(response_dict, dict):
+                    response_dict = dict(list(response_dict.items())[:requested_count])
+                    final_response = json.dumps(response_dict, ensure_ascii=False)
                 final_response_dict = response_dict
                 attempt_record["parsed"] = {"ok": True, "data": response_dict}
                 attempt_record["validation"]["json_parse_passed"] = True

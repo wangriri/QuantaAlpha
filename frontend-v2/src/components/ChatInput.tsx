@@ -11,6 +11,7 @@ interface ChatInputProps {
 
 export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunning = false }) => {
   const [input, setInput] = useState('');
+  const [minuteQuickTest, setMinuteQuickTest] = useState(true);
   const [useCustomMiningDirection, setUseCustomMiningDirection] = useState(false);
   const [promptPacks, setPromptPacks] = useState<PromptPackOption[]>([
     {
@@ -84,6 +85,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
       promptPack,
       ...config,
       librarySuffix: suffix,
+      minuteQuickTest,
     } as TaskConfig);
   };
 
@@ -308,6 +310,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSubmit, onStop, isRunnin
                   )}
                 </div>
               </div>
+              {/分钟|minute|\$m_|m_session/i.test(input) && (
+                <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" checked={minuteQuickTest} onChange={(event) => setMinuteQuickTest(event.target.checked)} disabled={isRunning} />
+                  分钟试运行（20 个交易日；验证流程，不代表多年回测）
+                </label>
+              )}
             </div>
           </div>
         </div>

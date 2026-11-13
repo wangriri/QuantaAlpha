@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -168,13 +169,26 @@ class MongoMinuteProvider:
     def _collection(ts_code: str) -> str:
         return f"{ts_code}_1min"
 
+    @staticmethod
+    def _read_rows(collection, query: dict, projection: dict) -> list[dict]:
+        from pymongo.errors import AutoReconnect
+
+        for attempt in range(3):
+            try:
+                return list(collection.find(query, projection))
+            except AutoReconnect:
+                if attempt == 2:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
+        raise AssertionError("unreachable")
+
     def _adjustment_factors(self, date: pd.Timestamp, ts_codes: list[str]) -> dict[str, float]:
         if self.daily_db is None:
             raise RuntimeError("MONGO_DB must be configured to apply point-in-time adjustment factors")
         collection = self.daily_db[f"Stock_Adj_{date.year}"]
         ymd = date.strftime("%Y%m%d")
         query = {"ts_code": {"$in": ts_codes}, "trade_date": {"$in": [ymd, date.strftime("%Y-%m-%d")]}}
-        rows = collection.find(query, {"_id": 0, "ts_code": 1, "adj_factor": 1})
+        rows = self._read_rows(collection, query, {"_id": 0, "ts_code": 1, "adj_factor": 1})
         return {row["ts_code"]: float(row["adj_factor"]) for row in rows if row.get("adj_factor") is not None}
 
     def load_day(
@@ -192,9 +206,10 @@ class MongoMinuteProvider:
         date_values = [date.strftime("%Y%m%d"), date.strftime("%Y-%m-%d")]
         projection = {"_id": 0, "trade_time": 1, "trade_date": 1, **{name: 1 for name in source_fields}}
         for instrument, ts_code in zip(instruments, ts_codes):
-            rows = self.minute_db[self._collection(ts_code)].find(
-                {"trade_date": {"$in": date_values}}, projection
-            ).sort("trade_time", 1)
+            rows = self._read_rows(
+                self.minute_db[self._collection(ts_code)],
+                {"trade_date": {"$in": date_values}}, projection,
+            )
             result = normalize_minute_documents(rows, date, instrument, source_fields, self.expected_bars)
             if result.frame.empty:
                 issues.extend(result.issues)

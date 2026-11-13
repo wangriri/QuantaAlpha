@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
 from quantaalpha.factors.minute.engine import MinuteFactorEngine
-from quantaalpha.factors.minute.mongo_reader import MinuteDayResult, is_sh_sz_a_share, normalize_minute_documents
+from pymongo.errors import AutoReconnect
+import yaml
+
+from quantaalpha.factors.minute.mongo_reader import MongoMinuteProvider, MinuteDayResult, is_sh_sz_a_share, normalize_minute_documents
+from quantaalpha.factors.minute.quick_run import prepare_quick_run
 from quantaalpha.factors.minute.operators import M_DELAY, M_SESSION_RETURN, M_SLICE
 
 
@@ -48,6 +55,22 @@ class MinuteOperatorTest(unittest.TestCase):
 
 
 class MinuteDataQualityTest(unittest.TestCase):
+    def test_transient_mongo_cancellation_retries_the_read(self):
+        class Collection:
+            calls = 0
+
+            def find(self, *_args):
+                self.calls += 1
+                if self.calls == 1:
+                    raise AutoReconnect("operation cancelled")
+                return [{"trade_time": "2025-01-02 09:30:00"}]
+
+        collection = Collection()
+        with patch("quantaalpha.factors.minute.mongo_reader.time.sleep"):
+            rows = MongoMinuteProvider._read_rows(collection, {}, {})
+        self.assertEqual(collection.calls, 2)
+        self.assertEqual(len(rows), 1)
+
     def test_universe_accepts_only_shanghai_shenzhen_a_shares(self):
         self.assertTrue(is_sh_sz_a_share("sh600000"))
         self.assertTrue(is_sh_sz_a_share("sz300750"))
@@ -123,6 +146,25 @@ class MinuteEngineTest(unittest.TestCase):
         provider = FakeProvider()
         MinuteFactorEngine(provider).calculate("x", "M_SESSION_MEAN($m_close)", daily)
         self.assertNotIn("bj430001", provider.calls[0][1])
+
+
+class MinuteQuickRunTest(unittest.TestCase):
+    def test_daily_input_is_bounded_and_minute_bars_are_not_saved(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            dates = pd.bdate_range("2025-11-03", periods=24)
+            index = pd.MultiIndex.from_product([dates, ["sz000001", "sh600000", "bj430001"]], names=["datetime", "instrument"])
+            pd.DataFrame({"$pe_ttm": range(len(index))}, index=index).to_hdf(root / "debug.h5", key="data")
+            config = {"periods": {}, "engine": {}}
+            (root / "evaluation.yaml").write_text(yaml.safe_dump(config))
+            source, evaluation, rows = prepare_quick_run(root / "debug.h5", root / "evaluation.yaml", root / "quick")
+            result = pd.read_hdf(source, key="data")
+            self.assertEqual(rows, 40)
+            self.assertEqual(result.index.get_level_values("datetime").nunique(), 20)
+            self.assertNotIn("bj430001", result.index.get_level_values("instrument"))
+            self.assertEqual(sorted(path.name for path in source.parent.iterdir()), ["daily_pv.h5"])
+            self.assertEqual(evaluation.parent, source.parent.parent)
+            self.assertEqual(yaml.safe_load(evaluation.read_text())["periods"]["training"][0], dates[4].strftime("%Y-%m-%d"))
 
 
 if __name__ == "__main__":

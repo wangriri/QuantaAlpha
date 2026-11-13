@@ -322,6 +322,7 @@ class MiningStartRequest(BaseModel):
     parallelEnabled: Optional[bool] = Field(None, description="Enable parallel execution within evolution phases")
     backtestTimeout: Optional[int] = Field(None, description="Backtest timeout in seconds")
     promptPack: Optional[str] = Field(None, description="Prompt pack name under quantaalpha/prompting/packs")
+    minuteQuickTest: Optional[bool] = Field(None, description="Use a bounded 20-session acceptance run for minute factors")
 
 
 class BacktestStartRequest(BaseModel):
@@ -1599,6 +1600,9 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
     """
     task = tasks[task_id]
     try:
+        is_minute_direction = any(token in req.direction.lower() for token in ("分钟", "minute", "$m_", "m_session"))
+        quick_test = is_minute_direction if req.minuteQuickTest is None else bool(req.minuteQuickTest and is_minute_direction)
+        task["config"]["minuteQuickTest"] = quick_test
         # Build the command
         env = os.environ.copy()
         # Load .env into env
@@ -1693,6 +1697,27 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
                 prompt_cfg["pack"] = req.promptPack
                 prompt_cfg.update(_prompt_pack_defaults(req.promptPack))
 
+            if quick_test:
+                from quantaalpha.factors.minute.quick_run import prepare_quick_run
+
+                debug_dir = Path(env.get("FACTOR_CoSTEER_DATA_FOLDER_DEBUG") or PROJECT_ROOT / "git_ignore_folder" / "factor_implementation_source_data_debug")
+                if not debug_dir.is_absolute():
+                    debug_dir = PROJECT_ROOT / debug_dir
+                quick_dir = Path(env["WORKSPACE_PATH"]) / "minute_quick_input"
+                daily_path, evaluation_path, row_count = prepare_quick_run(
+                    debug_dir / "daily_pv.h5", EVALUATION_CONFIG_PATH, quick_dir,
+                )
+                env["FACTOR_CoSTEER_DATA_FOLDER"] = str(daily_path.parent)
+                env["FACTOR_CoSTEER_DATA_FOLDER_DEBUG"] = str(daily_path.parent)
+                env["QUANTAALPHA_FACTORS_PER_HYPOTHESIS"] = "1"
+                run_cfg.setdefault("backtest", {}).setdefault("evaluation", {})["config_path"] = str(evaluation_path)
+                run_cfg.setdefault("planning", {})["enabled"] = False
+                run_cfg.setdefault("evolution", {})["enabled"] = False
+                run_cfg.setdefault("execution", {})["step_n"] = 5
+                run_cfg.setdefault("factor", {})["factors_per_hypothesis"] = 1
+                task["config"]["minuteQuickRows"] = row_count
+                task["config"]["minuteQuickPeriod"] = yaml.safe_load(evaluation_path.read_text(encoding="utf-8"))["periods"]
+
             # Write to a temporary file so the original is untouched
             tmp_dir = Path(env.get("WORKSPACE_PATH", "/tmp"))
             tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -1701,6 +1726,8 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
                 yaml.safe_dump(run_cfg, _f, allow_unicode=True, default_flow_style=False)
             config_path_to_use = str(tmp_cfg)
         except Exception as cfg_err:
+            if quick_test:
+                raise
             # Fall back to original config if anything fails
             import traceback
             traceback.print_exc()

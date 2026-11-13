@@ -61,6 +61,7 @@ export interface TaskConfig {
   backtestTimeout?: number;
   promptPack?: PromptPack;
   traceRunId?: string;
+  minuteQuickTest?: boolean;
 }
 
 // Real-time metrics

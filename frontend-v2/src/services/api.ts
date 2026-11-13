@@ -52,6 +52,7 @@ export interface MiningStartParams {
   parallelEnabled?: boolean;
   backtestTimeout?: number;
   promptPack?: PromptPack;
+  minuteQuickTest?: boolean;
 }
 
 export async function startMining(params: MiningStartParams) {
