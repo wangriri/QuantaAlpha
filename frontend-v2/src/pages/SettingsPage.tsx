@@ -721,10 +721,10 @@ export const SettingsPage: React.FC = () => {
                 <div>
                   <CardTitle className="flex items-center gap-2">
                     <Database className="h-5 w-5 text-primary" />
-                    当前特征数据
+                    可用数据
                   </CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    从 daily_pv.h5 实时读取列名和数据概览；文件更新后刷新即可同步。
+                    分钟字段按公式读取计算，不预先存成特征列。
                   </p>
                 </div>
                 <Button variant="outline" onClick={loadDailyFeatures} disabled={dailyFeaturesLoading}>
@@ -760,10 +760,14 @@ export const SettingsPage: React.FC = () => {
 
               {dailyFeatures?.exists && (
                 <>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                     <div className="rounded-lg border border-border/60 bg-background/60 p-4">
-                      <div className="text-xs text-muted-foreground">特征列数</div>
+                      <div className="text-xs text-muted-foreground">日频原始字段</div>
                       <div className="mt-1 text-2xl font-semibold">{dailyFeatures.featureCount}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/60 bg-background/60 p-4">
+                      <div className="text-xs text-muted-foreground">分钟原始字段</div>
+                      <div className="mt-1 text-2xl font-semibold">{dailyFeatures.minuteFieldCount ?? '--'}</div>
                     </div>
                     <div className="rounded-lg border border-border/60 bg-background/60 p-4">
                       <div className="text-xs text-muted-foreground">样本行数</div>

@@ -1277,11 +1277,14 @@ def _feature_category(name: str) -> str:
 
 
 def _read_daily_feature_metadata() -> Dict[str, Any]:
+    from quantaalpha.factors.minute.mongo_reader import MINUTE_COLUMNS
+
     if not DAILY_FEATURE_PATH.exists():
         return {
             "exists": False,
             "path": str(DAILY_FEATURE_PATH),
             "features": [],
+            "minuteFieldCount": len(MINUTE_COLUMNS),
         }
 
     import pandas as pd
@@ -1320,6 +1323,7 @@ def _read_daily_feature_metadata() -> Dict[str, Any]:
         "modifiedAt": datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(),
         "rowCount": row_count,
         "featureCount": feature_count,
+        "minuteFieldCount": len(MINUTE_COLUMNS),
         "dateMin": date_min,
         "dateMax": date_max,
         "instrumentCount": instrument_count,

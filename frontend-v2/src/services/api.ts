@@ -413,6 +413,7 @@ export interface DailyFeatureMetadata {
   modifiedAt?: string;
   rowCount?: number;
   featureCount?: number;
+  minuteFieldCount?: number;
   dateMin?: string | null;
   dateMax?: string | null;
   instrumentCount?: number;
